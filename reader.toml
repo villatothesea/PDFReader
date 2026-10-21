@@ -1,0 +1,8 @@
+id = "mireader.pdf"
+name = "PDF"
+version = "0.1.0"
+protocol = 1
+executable = "mireader-reader-pdf"
+extensions = ["pdf"]
+description = "Portable Document Format, rendered with hayro"
+license = "MIT (MiReader); hayro: MIT/Apache-2.0"

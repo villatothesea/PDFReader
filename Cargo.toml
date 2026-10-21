@@ -1,0 +1,25 @@
+[package]
+name = "mireader-reader-pdf"
+description = "MiReader reader plugin: PDF, rasterised with hayro"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mireader-reader-pdf"
+path = "src/main.rs"
+
+[dependencies]
+# The SDK lives in the reader's repository, a sibling of this one:
+# E:\Villa\VibeCoding\MimiReader\{MimiReader,PDFReader}.
+mireader-reader-sdk = { path = "../MimiReader/crates/reader-sdk" }
+hayro = "0.8"
+
+[dev-dependencies]
+mireader-reader-host = { path = "../MimiReader/crates/reader-host" }
+png = "0.18"
+tempfile = "3"
+
+# A workspace of its own, so cargo never looks for one in a parent folder.
+[workspace]
