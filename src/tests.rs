@@ -166,3 +166,235 @@ fn the_theme_mapping_sends_white_to_the_ground_and_black_to_the_ink() {
     let red = recolor::remap_color([200, 0, 0], ground, ink);
     assert!(red[0] > red[1] + 40 && red[0] > red[2] + 40, "{red:?}");
 }
+
+// Item 19: editing in place.
+mod editing {
+    use std::path::{Path, PathBuf};
+
+    use mireader_reader_sdk::{
+        AnnotationKind, Document, EditKind, EditOp, ErrorCode, GuardKind, MarkupKind, Reader, Target,
+    };
+
+    use super::fixtures;
+    use crate::PdfReader;
+
+    fn file(bytes: &[u8]) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.pdf");
+        std::fs::write(&path, bytes).unwrap();
+        (dir, path)
+    }
+
+    fn open(path: &Path) -> Box<dyn Document> {
+        PdfReader.open(path).unwrap()
+    }
+
+    /// The first line of page 1 as one quad (the text layer's space).
+    fn first_line(doc: &mut Box<dyn Document>) -> [f32; 8] {
+        let text = doc.page_text(0).unwrap();
+        let line_end = text.text.find('\n').unwrap_or(text.text.len());
+        let count = text.text[..line_end].chars().count();
+        let boxes: Vec<[f32; 4]> = text.boxes[..count].iter().copied().filter(|b| b[2] > b[0]).collect();
+        let x0 = boxes.iter().map(|b| b[0]).fold(f32::MAX, f32::min);
+        let y0 = boxes.iter().map(|b| b[1]).fold(f32::MAX, f32::min);
+        let x1 = boxes.iter().map(|b| b[2]).fold(f32::MIN, f32::max);
+        let y1 = boxes.iter().map(|b| b[3]).fold(f32::MIN, f32::max);
+        [x0, y0, x1, y0, x0, y1, x1, y1]
+    }
+
+    /// A highlight over the text layer's first line, a note, a recolour, a
+    /// bookmark — undone, redone, saved as an incremental update and read
+    /// back from the file.
+    #[test]
+    fn comments_and_bookmarks_round_trip_through_a_save() {
+        let original = fixtures::build_rich();
+        let (_dir, path) = file(&original);
+        let mut doc = open(&path);
+        let edit = doc.info().edit.expect("editable");
+        assert_eq!(edit.kinds, vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark]);
+        assert!(edit.guard.is_none());
+
+        let quad = first_line(&mut doc);
+        let (state, highlight) = doc
+            .edit(EditOp::AddMarkup { page: 0, kind: MarkupKind::Highlight, quads: vec![quad], color: None, contents: None })
+            .unwrap();
+        let highlight = highlight.expect("an id");
+        assert!(state.dirty && state.can_undo && !state.can_redo);
+        let (_, note) = doc
+            .edit(EditOp::AddNote { page: 0, at: [250.0, 20.0], contents: "Check this".into(), color: None })
+            .unwrap();
+        doc.edit(EditOp::SetColor { id: highlight.clone(), color: [0.4, 0.9, 0.4] }).unwrap();
+        doc.edit(EditOp::AddBookmark { parent: vec![], index: 0, title: "First look".into(), page: 1 }).unwrap();
+
+        let items = doc.annotations(0).unwrap();
+        assert_eq!(items.len(), 2, "{items:?}");
+        let mark = items.iter().find(|a| a.id == highlight).expect("the highlight");
+        assert_eq!(mark.kind, AnnotationKind::Highlight);
+        assert!(mark.editable);
+        let back = mark.quads[0];
+        for (a, b) in back.iter().zip(quad.iter()) {
+            assert!((a - b).abs() < 0.5, "quad round trip {back:?} vs {quad:?}");
+        }
+        assert_eq!(mark.color, Some([0.4, 0.9, 0.4]));
+        let pinned = items.iter().find(|a| Some(&a.id) == note.as_ref()).expect("the note");
+        assert_eq!(pinned.kind, AnnotationKind::Note);
+        assert_eq!(pinned.contents.as_deref(), Some("Check this"));
+        assert!((pinned.rect[0] - 250.0).abs() < 1.0 && (pinned.rect[1] - 20.0).abs() < 1.0, "{:?}", pinned.rect);
+        assert_eq!(doc.info().outline[0].title, "First look");
+        assert_eq!(doc.info().outline[0].target, Target::Page(1));
+
+        // Undo the bookmark and the recolour; redo the recolour.
+        doc.undo().unwrap();
+        assert!(doc.info().outline.iter().all(|e| e.title != "First look"));
+        doc.undo().unwrap();
+        assert_ne!(doc.annotations(0).unwrap().iter().find(|a| a.id == highlight).unwrap().color, Some([0.4, 0.9, 0.4]));
+        let state = doc.redo().unwrap();
+        assert!(state.can_redo, "the bookmark can still be redone");
+        assert_eq!(doc.annotations(0).unwrap().iter().find(|a| a.id == highlight).unwrap().color, Some([0.4, 0.9, 0.4]));
+
+        // The page renders (hayro draws the comments' appearances).
+        doc.render_page(0, 1.0).unwrap();
+
+        let state = doc.save().unwrap();
+        assert!(!state.dirty);
+        let saved = std::fs::read(&path).unwrap();
+        assert!(saved.starts_with(&original), "an incremental update keeps the original bytes");
+        let mut reread = open(&path);
+        let items = reread.annotations(0).unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|a| a.id == highlight), "ids survive a save: {items:?}");
+        assert!(!reread.info().edit.unwrap().state.dirty);
+    }
+
+    /// Deleting a comment, and saving again after a save (the second update
+    /// appends to the first).
+    #[test]
+    fn delete_and_a_second_save_append() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let mut doc = open(&path);
+        let quad = first_line(&mut doc);
+        let (_, id) = doc
+            .edit(EditOp::AddMarkup { page: 0, kind: MarkupKind::StrikeOut, quads: vec![quad], color: None, contents: None })
+            .unwrap();
+        doc.save().unwrap();
+        let first = std::fs::read(&path).unwrap();
+        doc.edit(EditOp::Delete { id: id.unwrap() }).unwrap();
+        assert!(doc.annotations(0).unwrap().is_empty());
+        doc.save().unwrap();
+        let second = std::fs::read(&path).unwrap();
+        assert!(second.starts_with(&first), "the second save appends to the first");
+        assert!(open(&path).annotations(0).unwrap().is_empty());
+    }
+
+    /// The file changed on disk since it was opened: the save refuses and
+    /// writes nothing; a touch that leaves the bytes alone is no conflict.
+    #[test]
+    fn a_save_refuses_a_file_changed_on_disk() {
+        let original = fixtures::build_rich();
+        let (_dir, path) = file(&original);
+        let mut doc = open(&path);
+        let quad = first_line(&mut doc);
+        doc.edit(EditOp::AddMarkup { page: 0, kind: MarkupKind::Underline, quads: vec![quad], color: None, contents: None })
+            .unwrap();
+        let mut other = fixtures::build();
+        std::fs::write(&path, &other).unwrap();
+        let error = doc.save().unwrap_err();
+        assert_eq!(error.code, ErrorCode::Conflict, "{error:?}");
+        assert_eq!(std::fs::read(&path).unwrap(), other, "nothing written");
+        // Put the original bytes back (a touch): saving goes through.
+        std::fs::write(&path, &original).unwrap();
+        doc.save().unwrap();
+        other = std::fs::read(&path).unwrap();
+        assert!(other.starts_with(&original));
+    }
+
+    /// An encrypted PDF needs its password; edits then carry an
+    /// "encrypted" note and save.
+    #[test]
+    fn an_encrypted_pdf_opens_with_its_password_and_edits() {
+        let mut cos = pdfcraft_cos::Document::open(std::sync::Arc::new(fixtures::build_rich())).unwrap();
+        cos.set_encryption(&pdfcraft_cos::NewEncryption {
+            algorithm: pdfcraft_cos::Algorithm::Aes256,
+            user_password: "open sesame",
+            owner_password: "owner",
+            permissions: -1,
+            encrypt_metadata: true,
+            seed: [3; 32],
+        })
+        .unwrap();
+        let encrypted = pdfcraft_cos::write_full(&cos, &pdfcraft_cos::SaveOptions::default()).unwrap();
+        let (_dir, path) = file(&encrypted);
+        let error = PdfReader.open(&path).err().expect("needs a password");
+        assert_eq!(error.code, ErrorCode::Encrypted);
+        let mut doc = PdfReader.open_with_password(&path, Some("open sesame")).unwrap();
+        let guard = doc.info().edit.unwrap().guard.expect("a note");
+        assert_eq!(guard.kind, GuardKind::Encrypted);
+        let quad = first_line(&mut doc);
+        doc.edit(EditOp::AddMarkup { page: 0, kind: MarkupKind::Highlight, quads: vec![quad], color: None, contents: None })
+            .unwrap();
+        doc.save().unwrap();
+        let mut reread = PdfReader.open_with_password(&path, Some("open sesame")).unwrap();
+        assert_eq!(reread.annotations(0).unwrap().len(), 1);
+    }
+
+    /// A signed PDF edits with a warning; a certified one (no changes)
+    /// refuses.
+    #[test]
+    fn signed_pdfs_warn_and_certified_ones_refuse() {
+        let signed = with_signature(None);
+        let (_dir, path) = file(&signed);
+        let doc = open(&path);
+        let edit = doc.info().edit.unwrap();
+        assert_eq!(edit.guard.as_ref().map(|g| g.kind), Some(GuardKind::Signed));
+        assert!(!edit.kinds.is_empty(), "comments are allowed");
+
+        let certified = with_signature(Some(1));
+        let (_dir2, path) = file(&certified);
+        let mut doc = open(&path);
+        let edit = doc.info().edit.unwrap();
+        assert_eq!(edit.guard.as_ref().map(|g| g.kind), Some(GuardKind::Permissions));
+        assert!(edit.kinds.is_empty());
+        let refused = doc
+            .edit(EditOp::AddNote { page: 0, at: [10.0, 10.0], contents: "x".into(), color: None })
+            .unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Unsupported);
+    }
+
+    /// The rich fixture plus a filled signature field (and, with `certify`,
+    /// a DocMDP certification with that `P`).
+    fn with_signature(certify: Option<i64>) -> Vec<u8> {
+        use pdfcraft_cos::{Dict, Object, write_incremental};
+        let mut cos = pdfcraft_cos::Document::open(std::sync::Arc::new(fixtures::build_rich())).unwrap();
+        let mut sig = Dict::new();
+        sig.set("Type", Object::name("Sig"));
+        sig.set("Filter", Object::name("Adobe.PPKLite"));
+        if let Some(p) = certify {
+            let mut params = Dict::new();
+            params.set("P", Object::Int(p));
+            let mut reference = Dict::new();
+            reference.set("TransformMethod", Object::name("DocMDP"));
+            reference.set("TransformParams", Object::Dict(params));
+            sig.set("Reference", Object::Array(vec![Object::Dict(reference)]));
+        }
+        let sig_ref = cos.add(Object::Dict(sig));
+        let mut field = Dict::new();
+        field.set("FT", Object::name("Sig"));
+        field.set("T", Object::String(pdfcraft_cos::PdfString::text("Signature1")));
+        field.set("V", Object::Ref(sig_ref));
+        let field_ref = cos.add(Object::Dict(field));
+        let mut form = Dict::new();
+        form.set("Fields", Object::Array(vec![Object::Ref(field_ref)]));
+        form.set("SigFlags", Object::Int(3));
+        let root = cos.root().unwrap();
+        cos.update_dict(root, |catalog| {
+            catalog.set("AcroForm", Object::Dict(form));
+            if certify.is_some() {
+                let mut perms = Dict::new();
+                perms.set("DocMDP", Object::Ref(sig_ref));
+                catalog.set("Perms", Object::Dict(perms));
+            }
+        })
+        .unwrap();
+        write_incremental(&cos, &pdfcraft_cos::SaveOptions::default()).unwrap()
+    }
+}

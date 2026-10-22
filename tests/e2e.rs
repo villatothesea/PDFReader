@@ -157,3 +157,66 @@ fn first_and_second_open_timings() {
         host.shutdown_all();
     }
 }
+
+// Item 19: edits, undo, a save and a password cross the process boundary.
+#[test]
+fn edits_save_and_passwords_cross_the_process_boundary() {
+    use mireader_reader_host::sdk::{EditOp, ErrorCode, MarkupKind};
+    let dir = tempfile::tempdir().unwrap();
+    let readers = dir.path().join("readers");
+    stage_package(&Path::new(env!("CARGO_MANIFEST_DIR")).join("reader.toml"), Path::new(EXE), &readers).unwrap();
+    let host = ReaderHost::new(HostConfig {
+        dirs: vec![readers],
+        ..HostConfig::default()
+    });
+    let original = fixtures::build_rich();
+    let file = dir.path().join("rich.pdf");
+    std::fs::write(&file, &original).unwrap();
+    let doc = host.open(&file).unwrap();
+    assert!(doc.info().edit.is_some(), "the PDF reader offers editing");
+    let (state, id) = doc
+        .edit(EditOp::AddMarkup {
+            page: 0,
+            kind: MarkupKind::Highlight,
+            quads: vec![[20.0, 30.0, 120.0, 30.0, 20.0, 52.0, 120.0, 52.0]],
+            color: None,
+            contents: None,
+        })
+        .unwrap();
+    assert!(state.dirty && id.is_some());
+    assert_eq!(doc.annotations(0).unwrap().len(), 1);
+    assert!(!doc.undo().unwrap().can_undo);
+    assert!(doc.annotations(0).unwrap().is_empty());
+    assert!(doc.redo().unwrap().dirty);
+    doc.edit(EditOp::AddBookmark { parent: vec![], index: 0, title: "Added".into(), page: 0 }).unwrap();
+    assert_eq!(doc.current_info().unwrap().outline[0].title, "Added");
+    assert!(!doc.save().unwrap().dirty);
+    assert!(std::fs::read(&file).unwrap().starts_with(&original));
+    let copy = dir.path().join("copy.pdf");
+    doc.save_as(&copy).unwrap();
+    let again = host.open(&copy).unwrap();
+    assert_eq!(again.annotations(0).unwrap().len(), 1);
+
+    // A password-protected file: refused without its password, opened and
+    // edited with it.
+    let mut cos = pdfcraft_cos::Document::open(std::sync::Arc::new(original.clone())).unwrap();
+    cos.set_encryption(&pdfcraft_cos::NewEncryption {
+        algorithm: pdfcraft_cos::Algorithm::Aes256,
+        user_password: "pw",
+        owner_password: "owner",
+        permissions: -1,
+        encrypt_metadata: true,
+        seed: [7; 32],
+    })
+    .unwrap();
+    let locked = dir.path().join("locked.pdf");
+    std::fs::write(&locked, pdfcraft_cos::write_full(&cos, &pdfcraft_cos::SaveOptions::default()).unwrap()).unwrap();
+    assert!(matches!(host.open(&locked), Err(HostError::Reader(e)) if e.code == ErrorCode::Encrypted));
+    assert!(matches!(host.open_with_password(&locked, Some("nope")), Err(HostError::Reader(e)) if e.code == ErrorCode::Encrypted));
+    let opened = host.open_with_password(&locked, Some("pw")).unwrap();
+    assert!(!opened.info().pages.is_empty());
+    opened.edit(EditOp::AddNote { page: 0, at: [10.0, 10.0], contents: "n".into(), color: None }).unwrap();
+    opened.save().unwrap();
+    assert_eq!(host.open_with_password(&locked, Some("pw")).unwrap().annotations(0).unwrap().len(), 1);
+    host.shutdown_all();
+}

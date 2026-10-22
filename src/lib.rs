@@ -7,10 +7,12 @@
 //! `Encrypted`.
 
 mod outline;
+// Item 19: comments and bookmarks written back in place.
+mod edit;
 mod recolor;
 mod scan;
 
-use std::{collections::VecDeque, path::Path};
+use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use hayro::{
     PixmapSettings, RenderCache, RenderSettings,
@@ -20,8 +22,8 @@ use hayro::{
     vello_cpu::color::palette::css::{TRANSPARENT, WHITE},
 };
 use mireader_reader_sdk::{
-    Document, DocumentInfo, ErrorCode, PROTOCOL_VERSION, PageGround, PageSize, PageText, Paper, Reader, ReaderError,
-    ReaderInfo, RenderedPage,
+    Annotation, Document, DocumentInfo, EditOp, EditState, ErrorCode, PROTOCOL_VERSION, PageGround, PageSize, PageText,
+    Paper, Reader, ReaderError, ReaderInfo, RenderedPage,
 };
 use scan::{Ground, Scan};
 
@@ -48,7 +50,16 @@ impl Reader for PdfReader {
     }
 
     fn open(&mut self, path: &Path) -> Result<Box<dyn Document>, ReaderError> {
-        Ok(Box::new(PdfDocument::new(std::fs::read(path)?)?))
+        self.open_with_password(path, None)
+    }
+
+    fn open_with_password(&mut self, path: &Path, password: Option<&str>) -> Result<Box<dyn Document>, ReaderError> {
+        let bytes = std::fs::read(path)?;
+        let mut doc = PdfDocument::with_password(bytes.clone(), password)?;
+        // Item 19: editable when pdfcraft can write the file back.
+        doc.editor = edit::Editor::open(path, Arc::new(bytes), password);
+        doc.password = password.map(str::to_owned);
+        Ok(Box::new(doc))
     }
 }
 
@@ -61,6 +72,9 @@ pub struct PdfDocument {
     info: DocumentInfo,
     /// Most recently used last.
     scans: VecDeque<(u32, Scan)>,
+    /// Item 19: the edit session, when the file can be written back.
+    editor: Option<edit::Editor>,
+    password: Option<String>,
 }
 
 /// A PDF text string: UTF-16BE with a BOM, UTF-8 with a BOM, or
@@ -78,7 +92,11 @@ fn decode_text(bytes: &[u8]) -> String {
 
 impl PdfDocument {
     pub fn new(bytes: Vec<u8>) -> Result<Self, ReaderError> {
-        let pdf = Pdf::new(bytes).map_err(|error| match error {
+        Self::with_password(bytes, None)
+    }
+
+    pub fn with_password(bytes: Vec<u8>, password: Option<&str>) -> Result<Self, ReaderError> {
+        let pdf = Pdf::new_with_password(bytes, password.unwrap_or("")).map_err(|error| match error {
             LoadPdfError::Decryption(_) => {
                 ReaderError::new(ErrorCode::Encrypted, "this PDF is password-protected")
             }
@@ -111,7 +129,28 @@ impl PdfDocument {
             pdf,
             info,
             scans: VecDeque::new(),
+            editor: None,
+            password: None,
         })
+    }
+
+    /// Item 19: read the edited document again — its pages, outline and
+    /// text — after an edit, an undo or a save.
+    fn reload(&mut self) -> Result<(), ReaderError> {
+        let Some(editor) = &self.editor else { return Ok(()) };
+        let bytes = editor.bytes()?;
+        let fresh = Self::with_password(bytes, self.password.as_deref())?;
+        self.pdf = fresh.pdf;
+        self.info.pages = fresh.info.pages;
+        self.info.outline = fresh.info.outline;
+        self.scans.clear();
+        Ok(())
+    }
+
+    fn editor(&mut self) -> Result<&mut edit::Editor, ReaderError> {
+        self.editor
+            .as_mut()
+            .ok_or_else(|| ReaderError::unsupported("this PDF can't be edited"))
     }
 
     /// The scan of page `ix`, interpreted once and kept for a while.
@@ -144,7 +183,9 @@ pub fn clamp_scale(width: f32, height: f32, scale: f32) -> f32 {
 
 impl Document for PdfDocument {
     fn info(&self) -> DocumentInfo {
-        self.info.clone()
+        let mut info = self.info.clone();
+        info.edit = self.editor.as_ref().map(edit::Editor::info);
+        info
     }
 
     fn render_page(&mut self, page: u32, scale: f32) -> Result<RenderedPage, ReaderError> {
@@ -208,6 +249,40 @@ impl Document for PdfDocument {
     /// The page's plain text (search).
     fn text(&mut self, index: u32) -> Result<String, ReaderError> {
         Ok(self.page_text(index)?.text)
+    }
+
+    fn annotations(&mut self, page: u32) -> Result<Vec<Annotation>, ReaderError> {
+        self.editor()?.annotations(page)
+    }
+
+    fn edit(&mut self, op: EditOp) -> Result<(EditState, Option<String>), ReaderError> {
+        let created = self.editor()?.apply(op)?;
+        self.reload()?;
+        Ok((self.editor()?.state(), created))
+    }
+
+    fn undo(&mut self) -> Result<EditState, ReaderError> {
+        if self.editor()?.undo() {
+            self.reload()?;
+        }
+        Ok(self.editor()?.state())
+    }
+
+    fn redo(&mut self) -> Result<EditState, ReaderError> {
+        if self.editor()?.redo() {
+            self.reload()?;
+        }
+        Ok(self.editor()?.state())
+    }
+
+    fn save(&mut self) -> Result<EditState, ReaderError> {
+        self.editor()?.save()?;
+        Ok(self.editor()?.state())
+    }
+
+    fn save_as(&mut self, path: &Path) -> Result<EditState, ReaderError> {
+        self.editor()?.save_as(path)?;
+        Ok(self.editor()?.state())
     }
 }
 #[cfg(test)]
