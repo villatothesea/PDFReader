@@ -1,27 +1,103 @@
-//! A two-page PDF written in code, with a correct cross-reference table.
-//!
-//! Page 1 is 200×100 pt with a blue rectangle at (20,20)–(180,80); page 2
-//! is 300×150 pt and blank. The info dictionary has a title (UTF-16BE) and
-//! an author.
+//! PDFs written in code, with correct cross-reference tables.
 
+#![allow(dead_code)]
+
+/// A two-page PDF. Page 1 is 200×100 pt with a blue rectangle at
+/// (20,20)–(180,80); page 2 is 300×150 pt and blank. The info dictionary
+/// has a title (UTF-16BE) and an author.
 pub fn build() -> Vec<u8> {
     let content = b"0 0 1 rg 20 20 160 60 re f\n";
     let title_utf16: String = std::iter::once("FEFF".to_string())
         .chain("Fixture Title".encode_utf16().map(|u| format!("{u:04X}")))
         .collect();
-    let objects: Vec<Vec<u8>> = vec![
-        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
-        b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << >> >>".to_vec(),
-        [
-            format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(),
-            content.to_vec(),
-            b"endstream".to_vec(),
-        ]
-        .concat(),
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 150] /Resources << >> >>".to_vec(),
-        format!("<< /Title <{title_utf16}> /Author (Pat Printer) >>").into_bytes(),
-    ];
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << >> >>".to_vec(),
+            stream("", content),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 150] /Resources << >> >>".to_vec(),
+            format!("<< /Title <{title_utf16}> /Author (Pat Printer) >>").into_bytes(),
+        ],
+        "/Info 6 0 R",
+    )
+}
+
+/// Four 300×200 pt pages and an outline:
+///
+/// 1. text in Helvetica 20 pt: "Hello World" on the baseline y=150 (PDF
+///    space; 50 pt from the top), "Second line" 30 pt below it;
+/// 2. a red full-page fill, then black text "On red" — a declared ground;
+/// 3. a 2×2 RGB image stretched over the whole page — an image page;
+/// 4. blank.
+///
+/// Outline: "Intro" → page 1 (explicit `/Dest`) with child "Details" →
+/// page 3; "Chapter 2" → page 2 through a `/GoTo` to the named
+/// destination `(chap2)` in the catalog's `/Dests`.
+pub fn build_rich() -> Vec<u8> {
+    let font = "/Resources << /Font << /F1 8 0 R >> >>";
+    let page = |contents: u32, resources: &str| {
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents {contents} 0 R {resources} >>")
+            .into_bytes()
+    };
+    let image_pixels: &[u8] = &[255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+    write_pdf(
+        &[
+            // 1
+            b"<< /Type /Catalog /Pages 2 0 R /Outlines 9 0 R /Dests << /chap2 [5 0 R /Fit] >> >>".to_vec(),
+            // 2
+            b"<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 12 0 R] /Count 4 >>".to_vec(),
+            // 3
+            page(4, font),
+            // 4
+            stream(
+                "",
+                b"BT /F1 20 Tf 20 150 Td (Hello World) Tj 0 -30 Td (Second line) Tj ET\n",
+            ),
+            // 5
+            page(6, font),
+            // 6
+            stream(
+                "",
+                b"1 0 0 rg 0 0 300 200 re f 0 0 0 rg BT /F1 20 Tf 20 150 Td (On red) Tj ET\n",
+            ),
+            // 7
+            page(13, "/Resources << /XObject << /Im1 14 0 R >> >>"),
+            // 8
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+            // 9
+            b"<< /Type /Outlines /First 10 0 R /Last 11 0 R /Count 2 >>".to_vec(),
+            // 10
+            b"<< /Title (Intro) /Parent 9 0 R /Next 11 0 R /Dest [3 0 R /XYZ 0 200 0] /First 15 0 R /Last 15 0 R /Count 1 >>".to_vec(),
+            // 11
+            b"<< /Title (Chapter 2) /Parent 9 0 R /Prev 10 0 R /A << /S /GoTo /D (chap2) >> >>".to_vec(),
+            // 12
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> >>".to_vec(),
+            // 13
+            stream("", b"q 300 0 0 200 0 0 cm /Im1 Do Q\n"),
+            // 14
+            stream(
+                "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8",
+                image_pixels,
+            ),
+            // 15
+            b"<< /Title (Details) /Parent 10 0 R /Dest [7 0 R /Fit] >>".to_vec(),
+        ],
+        "",
+    )
+}
+
+fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
+    [
+        format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),
+        data.to_vec(),
+        b"\nendstream".to_vec(),
+    ]
+    .concat()
+}
+
+/// Objects numbered from 1, a classic xref table and a trailer.
+fn write_pdf(objects: &[Vec<u8>], trailer_extra: &str) -> Vec<u8> {
     let mut out = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
     for (ix, body) in objects.iter().enumerate() {
@@ -37,7 +113,7 @@ pub fn build() -> Vec<u8> {
     }
     out.extend(
         format!(
-            "trailer\n<< /Size {} /Root 1 0 R /Info 6 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            "trailer\n<< /Size {} /Root 1 0 R {trailer_extra} >>\nstartxref\n{xref}\n%%EOF\n",
             objects.len() + 1
         )
         .into_bytes(),
@@ -45,18 +121,27 @@ pub fn build() -> Vec<u8> {
     out
 }
 
-/// RGBA of the pixel at (x, y) in a PNG.
-pub fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 4] {
+/// Every pixel of a PNG as straight RGBA, with its width.
+pub fn pixels(png: &[u8]) -> (Vec<[u8; 4]>, u32) {
     let decoder = png::Decoder::new(std::io::Cursor::new(png));
     let mut reader = decoder.read_info().unwrap();
     let mut buffer = vec![0; reader.output_buffer_size().unwrap()];
     let frame = reader.next_frame(&mut buffer).unwrap();
     let channels = frame.color_type.samples();
-    let at = (y as usize * frame.width as usize + x as usize) * channels;
-    let px = &buffer[at..at + channels];
-    match channels {
-        4 => [px[0], px[1], px[2], px[3]],
-        3 => [px[0], px[1], px[2], 255],
-        _ => [px[0], px[0], px[0], 255],
-    }
+    let pixels = buffer[..frame.buffer_size()]
+        .chunks_exact(channels)
+        .map(|px| match channels {
+            4 => [px[0], px[1], px[2], px[3]],
+            3 => [px[0], px[1], px[2], 255],
+            2 => [px[0], px[0], px[0], px[1]],
+            _ => [px[0], px[0], px[0], 255],
+        })
+        .collect();
+    (pixels, frame.width)
+}
+
+/// RGBA of the pixel at (x, y) in a PNG.
+pub fn pixel(png: &[u8], x: u32, y: u32) -> [u8; 4] {
+    let (pixels, width) = pixels(png);
+    pixels[(y * width + x) as usize]
 }

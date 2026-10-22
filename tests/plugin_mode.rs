@@ -6,7 +6,7 @@ mod fixtures;
 
 use std::path::Path;
 
-use mireader_reader_host::{HostConfig, ReaderHost, sdk::Layout, stage_package};
+use mireader_reader_host::{HostConfig, ReaderHost, sdk::{Layout, Paper}, stage_package};
 
 const EXE: &str = env!("CARGO_BIN_EXE_mireader-reader-pdf");
 
@@ -34,7 +34,7 @@ fn installs_opens_and_hot_swaps_from_a_standalone_build() {
     std::fs::write(&file, fixtures::build()).unwrap();
     let doc = host.open(&file).unwrap();
     assert_eq!(doc.info().layout, Layout::Paged);
-    assert_eq!(doc.render_page(0, 1.0).unwrap().width, 200);
+    assert_eq!(doc.render_page(0, 1.0, Paper::Document).unwrap().width, 200);
     let first = host.running();
     assert_eq!(first.len(), 1, "{first:?}");
 
@@ -42,8 +42,8 @@ fn installs_opens_and_hot_swaps_from_a_standalone_build() {
     // exe is locked on Windows), the package replaced, and the open document
     // carries on in a new process.
     host.install_package(&package).unwrap();
-    assert_eq!(doc.render_page(1, 1.0).unwrap().width, 300);
-    let page = doc.render_page(0, 1.5).unwrap();
+    assert_eq!(doc.render_page(1, 1.0, Paper::Document).unwrap().width, 300);
+    let page = doc.render_page(0, 1.5, Paper::Document).unwrap();
     let blue = fixtures::pixel(&page.png, 150, 75);
     assert!(blue[2] > 200 && blue[0] < 60, "the swapped-in process renders content: {blue:?}");
     let second = host.running();

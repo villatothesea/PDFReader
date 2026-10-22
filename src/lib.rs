@@ -6,17 +6,24 @@
 //! common "permissions only" case) read normally; others are refused with
 //! `Encrypted`.
 
-use std::path::Path;
+mod outline;
+mod recolor;
+mod scan;
+
+use std::{collections::VecDeque, path::Path};
 
 use hayro::{
-    PixmapSettings, RenderCache, RenderSettings, hayro_interpret::InterpreterSettings,
+    PixmapSettings, RenderCache, RenderSettings,
+    hayro_interpret::{InterpreterCache, InterpreterSettings},
     hayro_syntax::{LoadPdfError, Pdf},
-    vello_cpu::color::palette::css::WHITE,
+    kurbo::Rect,
+    vello_cpu::color::palette::css::{TRANSPARENT, WHITE},
 };
 use mireader_reader_sdk::{
-    Document, DocumentInfo, ErrorCode, PROTOCOL_VERSION, PageSize, Reader, ReaderError, ReaderInfo,
-    RenderedPage,
+    Document, DocumentInfo, ErrorCode, PROTOCOL_VERSION, PageSize, PageText, Paper, Reader, ReaderError,
+    ReaderInfo, RenderedPage,
 };
+use scan::{Ground, Scan};
 
 pub const ID: &str = "mireader.pdf";
 
@@ -45,9 +52,15 @@ impl Reader for PdfReader {
     }
 }
 
+/// Page scans kept for reuse (text layer, ground, image rects). A scan is
+/// cheap next to a render, but a long document's worth of glyphs is not.
+const SCANS_KEPT: usize = 24;
+
 pub struct PdfDocument {
     pdf: Pdf,
     info: DocumentInfo,
+    /// Most recently used last.
+    scans: VecDeque<(u32, Scan)>,
 }
 
 /// A PDF text string: UTF-16BE with a BOM, UTF-8 with a BOM, or
@@ -93,7 +106,31 @@ impl PdfDocument {
         };
         info.title = text(&metadata.title);
         info.author = text(&metadata.author);
-        Ok(Self { pdf, info })
+        info.outline = outline::read(&pdf);
+        Ok(Self {
+            pdf,
+            info,
+            scans: VecDeque::new(),
+        })
+    }
+
+    /// The scan of page `ix`, interpreted once and kept for a while.
+    fn scan(&mut self, ix: u32) -> Result<&Scan, ReaderError> {
+        if let Some(at) = self.scans.iter().position(|(page, _)| *page == ix) {
+            let entry = self.scans.remove(at).expect("position is in range");
+            self.scans.push_back(entry);
+        } else {
+            let pages = self.pdf.pages();
+            let page = pages
+                .get(ix as usize)
+                .ok_or_else(|| ReaderError::bad_request(format!("no page {ix}")))?;
+            let scan = Scan::page(page, &InterpreterCache::new());
+            if self.scans.len() >= SCANS_KEPT {
+                self.scans.pop_front();
+            }
+            self.scans.push_back((ix, scan));
+        }
+        Ok(&self.scans.back().expect("just pushed").1)
     }
 }
 
@@ -111,13 +148,24 @@ impl Document for PdfDocument {
     }
 
     fn render_page(&mut self, page: u32, scale: f32) -> Result<RenderedPage, ReaderError> {
+        self.render_page_on(page, scale, Paper::Document)
+    }
+
+    fn render_page_on(&mut self, ix: u32, scale: f32, paper: Paper) -> Result<RenderedPage, ReaderError> {
+        let themed = match paper {
+            Paper::Theme { background, ink } => {
+                let scan = self.scan(ix)?;
+                (scan.ground == Ground::Plain).then(|| (background, ink, scan.images.clone()))
+            }
+            Paper::Document => None,
+        };
         let pages = self.pdf.pages();
         let page = pages
-            .get(page as usize)
-            .ok_or_else(|| ReaderError::bad_request(format!("no page {page}")))?;
+            .get(ix as usize)
+            .ok_or_else(|| ReaderError::bad_request(format!("no page {ix}")))?;
         let (width, height) = page.render_dimensions();
         let scale = clamp_scale(width, height, scale);
-        let pixmap = hayro::render(
+        let mut pixmap = hayro::render(
             page,
             &RenderCache::new(),
             &InterpreterSettings::default(),
@@ -125,16 +173,34 @@ impl Document for PdfDocument {
             &PixmapSettings {
                 x_scale: scale,
                 y_scale: scale,
-                bg_color: WHITE,
+                // A themed plain page is drawn on nothing: the host's ground
+                // shows through.
+                bg_color: if themed.is_some() { TRANSPARENT } else { WHITE },
             },
         );
         let (width, height) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+        if let Some((background, ink, images)) = themed {
+            let s = scale as f64;
+            let images: Vec<Rect> = images
+                .iter()
+                .map(|r| Rect::new(r.x0 * s, r.y0 * s, r.x1 * s, r.y1 * s))
+                .collect();
+            recolor::remap(pixmap.data_as_u8_slice_mut(), width, height, background, ink, &images);
+        }
         let png = pixmap
             .into_png()
             .map_err(|e| ReaderError::new(ErrorCode::Internal, format!("PNG encoding failed: {e}")))?;
         Ok(RenderedPage { width, height, png })
     }
-}
 
+    fn page_text(&mut self, page: u32) -> Result<PageText, ReaderError> {
+        Ok(self.scan(page)?.text())
+    }
+
+    /// The page's plain text (search).
+    fn text(&mut self, index: u32) -> Result<String, ReaderError> {
+        Ok(self.page_text(index)?.text)
+    }
+}
 #[cfg(test)]
 mod tests;
