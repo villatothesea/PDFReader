@@ -257,6 +257,8 @@ mod editing {
 
         let state = doc.save().unwrap();
         assert!(!state.dirty);
+        let left: Vec<_> = std::fs::read_dir(path.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("doc.pdf")], "no temp file is left behind");
         let saved = std::fs::read(&path).unwrap();
         assert!(saved.starts_with(&original), "an incremental update keeps the original bytes");
         let mut reread = open(&path);

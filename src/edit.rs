@@ -501,7 +501,8 @@ impl Editor {
         let bytes = self.bytes()?;
         let folder = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let temp = folder.join(format!(".{name}.mimireader-save.tmp"));
+        // The reader's file tree hides `.mireader-save-*` while it exists.
+        let temp = folder.join(format!(".mireader-save-{name}.tmp"));
         std::fs::write(&temp, &bytes).map_err(io)?;
         if let Err(error) = std::fs::rename(&temp, path) {
             let _ = std::fs::remove_file(&temp);
