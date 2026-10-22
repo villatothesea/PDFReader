@@ -102,6 +102,15 @@ fn pages_are_classified_by_their_ground() {
     assert!(matches!(doc.scan(1).unwrap().ground, Ground::Declared([255, 0, 0, 255])));
     assert_eq!(doc.scan(2).unwrap().ground, Ground::Image);
     assert_eq!(doc.scan(3).unwrap().ground, Ground::Plain);
+    // Round 13 (C3): every rendered page tells the host its ground, on
+    // either paper.
+    use mireader_reader_sdk::{Document as _, PageGround};
+    let grounds: Vec<_> = (0..4).map(|ix| doc.render_page_on(ix, 0.5, Paper::Document).unwrap().ground).collect();
+    assert_eq!(
+        grounds,
+        [Some(PageGround::Plain), Some(PageGround::Declared), Some(PageGround::Image), Some(PageGround::Plain)]
+    );
+    assert_eq!(doc.render_page_on(2, 0.5, DARK).unwrap().ground, Some(PageGround::Image));
 }
 
 /// The most opaque pixel inside a page-point box, at `scale`.

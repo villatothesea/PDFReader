@@ -20,7 +20,7 @@ use hayro::{
     vello_cpu::color::palette::css::{TRANSPARENT, WHITE},
 };
 use mireader_reader_sdk::{
-    Document, DocumentInfo, ErrorCode, PROTOCOL_VERSION, PageSize, PageText, Paper, Reader, ReaderError,
+    Document, DocumentInfo, ErrorCode, PROTOCOL_VERSION, PageGround, PageSize, PageText, Paper, Reader, ReaderError,
     ReaderInfo, RenderedPage,
 };
 use scan::{Ground, Scan};
@@ -152,9 +152,17 @@ impl Document for PdfDocument {
     }
 
     fn render_page_on(&mut self, ix: u32, scale: f32, paper: Paper) -> Result<RenderedPage, ReaderError> {
+        // Round 13 (C3): every page is classified so the host can say why a
+        // page keeps its own colours. The scan is cached and the text layer
+        // needs it next anyway.
+        let scan = self.scan(ix)?;
+        let ground = match scan.ground {
+            Ground::Plain => PageGround::Plain,
+            Ground::Declared(_) => PageGround::Declared,
+            Ground::Image => PageGround::Image,
+        };
         let themed = match paper {
             Paper::Theme { background, ink } => {
-                let scan = self.scan(ix)?;
                 (scan.ground == Ground::Plain).then(|| (background, ink, scan.images.clone()))
             }
             Paper::Document => None,
@@ -190,7 +198,7 @@ impl Document for PdfDocument {
         let png = pixmap
             .into_png()
             .map_err(|e| ReaderError::new(ErrorCode::Internal, format!("PNG encoding failed: {e}")))?;
-        Ok(RenderedPage { width, height, png })
+        Ok(RenderedPage { width, height, png, ground: Some(ground) })
     }
 
     fn page_text(&mut self, page: u32) -> Result<PageText, ReaderError> {
