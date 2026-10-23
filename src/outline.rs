@@ -25,24 +25,26 @@ pub fn read(pdf: &Pdf) -> Vec<OutlineEntry> {
     let Some(outlines) = catalog.get::<Dict<'_>>(b"Outlines") else {
         return Vec::new();
     };
-    let pages: HashMap<ObjectIdentifier, u32> = pdf
-        .pages()
-        .iter()
-        .enumerate()
-        .filter_map(|(ix, page)| Some((page.raw().obj_id()?, ix as u32)))
-        .collect();
+    let pages = page_ids(pdf);
     let mut walk = Walk {
-        catalog: &catalog,
-        pages: &pages,
+        dests: Dests { catalog: &catalog, pages: &pages },
         seen: HashSet::new(),
         items: 0,
     };
     walk.children(&outlines, 0)
 }
 
+/// Each page object's index.
+pub(crate) fn page_ids(pdf: &Pdf) -> HashMap<ObjectIdentifier, u32> {
+    pdf.pages()
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, page)| Some((page.raw().obj_id()?, ix as u32)))
+        .collect()
+}
+
 struct Walk<'w, 'a> {
-    catalog: &'w Dict<'a>,
-    pages: &'w HashMap<ObjectIdentifier, u32>,
+    dests: Dests<'w, 'a>,
     /// Items already visited — a `/Next` cycle must not loop forever.
     seen: HashSet<ObjectIdentifier>,
     items: usize,
@@ -71,7 +73,7 @@ impl<'a> Walk<'_, 'a> {
                 .map(|title| title.trim().to_string())
                 .unwrap_or_default();
             let children = self.children(&item, depth + 1);
-            let page = self.destination_page(&item);
+            let page = self.dests.of(&item).map(|(page, _)| page);
             // An item with no usable target still groups its children; it
             // jumps to its first child's page.
             let target = page.or_else(|| children.first().map(|child| match child.target {
@@ -91,7 +93,18 @@ impl<'a> Walk<'_, 'a> {
         out
     }
 
-    fn destination_page(&self, item: &Dict<'a>) -> Option<u32> {
+}
+
+/// Destinations — an outline item's or (round 14, #5) a link's: the page
+/// and, when the destination says, the top of the view in user space.
+pub(crate) struct Dests<'w, 'a> {
+    pub catalog: &'w Dict<'a>,
+    pub pages: &'w HashMap<ObjectIdentifier, u32>,
+}
+
+impl<'a> Dests<'_, 'a> {
+    /// `item`'s `/Dest`, or its `/GoTo` action's `/D`.
+    pub fn of(&self, item: &Dict<'a>) -> Option<(u32, Option<f64>)> {
         if let Some(dest) = item.get::<Object<'a>>(b"Dest") {
             return self.resolve(dest);
         }
@@ -103,38 +116,65 @@ impl<'a> Walk<'_, 'a> {
     }
 
     /// An explicit destination array, or a name/string to look up.
-    fn resolve(&self, dest: Object<'a>) -> Option<u32> {
+    pub fn resolve(&self, dest: Object<'a>) -> Option<(u32, Option<f64>)> {
+        self.resolve_at(dest, 0)
+    }
+
+    fn resolve_at(&self, dest: Object<'a>, depth: usize) -> Option<(u32, Option<f64>)> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
         match dest {
             Object::Array(array) => self.explicit(&array),
-            Object::Name(name) => self.named(name.as_ref()),
-            Object::String(string) => self.named(string.as_bytes()),
+            Object::Name(name) => self.named(name.as_ref(), depth),
+            Object::String(string) => self.named(string.as_bytes(), depth),
             // `/D` of a named destination's dictionary form.
-            Object::Dict(dict) => self.resolve(dict.get::<Object<'a>>(b"D")?),
+            Object::Dict(dict) => self.resolve_at(dict.get::<Object<'a>>(b"D")?, depth + 1),
             _ => None,
         }
     }
 
-    fn explicit(&self, array: &Array<'a>) -> Option<u32> {
+    /// `[page /XYZ left top zoom]`, `[page /FitH top]`, `[page /FitBH top]`,
+    /// `[page /FitR left bottom right top]` say where the view's top is;
+    /// the other fits show the whole page.
+    fn explicit(&self, array: &Array<'a>) -> Option<(u32, Option<f64>)> {
         let mut items = array.iter::<Object<'a>>();
-        match items.next()? {
-            Object::Dict(page) => self.pages.get(&page.obj_id()?).copied(),
+        let page = match items.next()? {
+            Object::Dict(page) => self.pages.get(&page.obj_id()?).copied()?,
             // Remote-style destinations number the page directly.
-            Object::Number(number) => u32::try_from(number.as_i64()).ok(),
+            Object::Number(number) => u32::try_from(number.as_i64()).ok()?,
+            _ => return None,
+        };
+        let fit = match items.next() {
+            Some(Object::Name(name)) => name.as_ref().to_vec(),
+            _ => return Some((page, None)),
+        };
+        let rest: Vec<Option<f64>> = items
+            .map(|item| match item {
+                Object::Number(number) => Some(number.as_f64()),
+                _ => None,
+            })
+            .collect();
+        let top = match fit.as_slice() {
+            b"XYZ" => rest.get(1).copied().flatten(),
+            b"FitH" | b"FitBH" => rest.first().copied().flatten(),
+            b"FitR" => rest.get(3).copied().flatten(),
             _ => None,
-        }
+        };
+        Some((page, top))
     }
 
-    fn named(&self, name: &[u8]) -> Option<u32> {
+    fn named(&self, name: &[u8], depth: usize) -> Option<(u32, Option<f64>)> {
         // PDF 1.1: /Dests dictionary in the catalog.
         if let Some(dests) = self.catalog.get::<Dict<'a>>(b"Dests")
             && let Some(dest) = dests.get::<Object<'a>>(name)
         {
-            return self.resolve(dest);
+            return self.resolve_at(dest, depth + 1);
         }
         // PDF 1.2+: the /Names → /Dests name tree.
         let tree = self.catalog.get::<Dict<'a>>(b"Names")?.get::<Dict<'a>>(b"Dests")?;
         let dest = name_tree_lookup(&tree, name, 0)?;
-        self.resolve(dest)
+        self.resolve_at(dest, depth + 1)
     }
 }
 

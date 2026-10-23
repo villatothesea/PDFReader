@@ -87,6 +87,48 @@ pub fn build_rich() -> Vec<u8> {
     )
 }
 
+/// Round 14 (#5): three 300×200 pt pages with links on page 1:
+///
+/// - `[20 140 120 170]` → page 3 by an explicit `/XYZ` destination, top at
+///   y=120 (80 pt from the page's top);
+/// - `[20 100 120 120]` → a `/GoTo` to the named destination `(chap1)`:
+///   page 1, `/FitH` top 150 (50 pt from its top);
+/// - `[20 60 120 80]` → a `/URI` action, `https://example.org/x`;
+/// - `[150 60 250 80]` → a `/Launch` action (not followed: no link);
+/// - a `/Text` note (not a link).
+///
+/// Page 2 is turned 90° (`/Rotate 90`) and links `[10 10 60 30]` to page 1.
+pub fn build_linked() -> Vec<u8> {
+    write_pdf(
+        &[
+            // 1
+            b"<< /Type /Catalog /Pages 2 0 R /Dests << /chap1 [3 0 R /FitH 150] >> >>".to_vec(),
+            // 2
+            b"<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>".to_vec(),
+            // 3
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> /Annots [6 0 R 7 0 R 8 0 R 9 0 R 10 0 R] >>"
+                .to_vec(),
+            // 4
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Rotate 90 /Resources << >> /Annots [11 0 R] >>".to_vec(),
+            // 5
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> >>".to_vec(),
+            // 6
+            b"<< /Type /Annot /Subtype /Link /Rect [20 140 120 170] /Dest [5 0 R /XYZ 0 120 0] >>".to_vec(),
+            // 7
+            b"<< /Type /Annot /Subtype /Link /Rect [20 100 120 120] /A << /S /GoTo /D (chap1) >> >>".to_vec(),
+            // 8
+            b"<< /Type /Annot /Subtype /Link /Rect [20 60 120 80] /A << /S /URI /URI (https://example.org/x) >> >>".to_vec(),
+            // 9
+            b"<< /Type /Annot /Subtype /Link /Rect [150 60 250 80] /A << /S /Launch /F (calc.exe) >> >>".to_vec(),
+            // 10
+            b"<< /Type /Annot /Subtype /Text /Rect [200 150 220 170] /Contents (a note) >>".to_vec(),
+            // 11
+            b"<< /Type /Annot /Subtype /Link /Rect [10 10 60 30] /Dest [3 0 R /Fit] >>".to_vec(),
+        ],
+        "",
+    )
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),

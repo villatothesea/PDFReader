@@ -400,3 +400,57 @@ mod editing {
         write_incremental(&cos, &pdfcraft_cos::SaveOptions::default()).unwrap()
     }
 }
+
+// MIREADER (round 14, #5): links on the page.
+
+#[test]
+fn links_come_with_the_page_text() {
+    use mireader_reader_sdk::LinkTarget;
+    let mut doc = PdfDocument::new(fixtures::build_linked()).unwrap();
+    let links = doc.page_text(0).unwrap().links;
+    let got: Vec<([f32; 4], LinkTarget)> = links.into_iter().map(|l| (l.rect, l.target)).collect();
+    assert_eq!(
+        got,
+        vec![
+            // Top-left page points: y = 200 - PDF y.
+            ([20.0, 30.0, 120.0, 60.0], LinkTarget::Page { page: 2, top: Some(80.0) }),
+            ([20.0, 80.0, 120.0, 100.0], LinkTarget::Page { page: 0, top: Some(50.0) }),
+            ([20.0, 120.0, 120.0, 140.0], LinkTarget::Uri { uri: "https://example.org/x".into() }),
+        ],
+        "a /Launch action and a note are not links"
+    );
+    // A turned page: the link sits inside its turned 200×300 area, turned too.
+    let turned = doc.page_text(1).unwrap().links;
+    assert_eq!(turned.len(), 1);
+    let [x0, y0, x1, y1] = turned[0].rect;
+    assert!(x0 >= 0.0 && y0 >= 0.0 && x1 <= 200.0 && y1 <= 300.0, "{:?}", turned[0].rect);
+    assert_eq!(((x1 - x0).round(), (y1 - y0).round()), (20.0, 50.0), "{:?}", turned[0].rect);
+    assert_eq!(turned[0].target, LinkTarget::Page { page: 0, top: None });
+    assert!(doc.page_text(2).unwrap().links.is_empty());
+}
+
+#[test]
+fn outline_targets_are_unchanged_by_the_shared_resolver() {
+    let doc = PdfDocument::new(fixtures::build_rich()).unwrap();
+    let pages: Vec<Target> = doc.info().outline.iter().map(|e| e.target.clone()).collect();
+    assert_eq!(pages, vec![Target::Page(0), Target::Page(1)]);
+}
+
+/// Round 14 (#5): a real file's links, listed — `MIREADER_LINKS_PDF=<path>
+/// cargo test -- --ignored --nocapture real_links`.
+#[test]
+#[ignore = "needs a real PDF"]
+fn real_links() {
+    let Ok(path) = std::env::var("MIREADER_LINKS_PDF") else { return };
+    let mut doc = PdfDocument::new(std::fs::read(path).unwrap()).unwrap();
+    let mut total = 0;
+    for page in 0..doc.info().pages.len() as u32 {
+        let links = doc.page_text(page).unwrap().links;
+        total += links.len();
+        if !links.is_empty() && page < 6 {
+            println!("page {page}: {} links, first {:?}", links.len(), &links[..links.len().min(3)]);
+        }
+    }
+    println!("total links: {total}");
+    assert!(total > 0);
+}

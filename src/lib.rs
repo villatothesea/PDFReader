@@ -7,6 +7,8 @@
 //! `Encrypted`.
 
 mod outline;
+// Round 14 (#5): links on the page.
+mod links;
 // Item 19: comments and bookmarks written back in place.
 mod edit;
 mod recolor;
@@ -243,12 +245,15 @@ impl Document for PdfDocument {
     }
 
     fn page_text(&mut self, page: u32) -> Result<PageText, ReaderError> {
-        Ok(self.scan(page)?.text())
+        let mut text = self.scan(page)?.text();
+        // Round 14 (#5): the page's links ride with its text.
+        text.links = links::read(&self.pdf, page);
+        Ok(text)
     }
 
     /// The page's plain text (search).
     fn text(&mut self, index: u32) -> Result<String, ReaderError> {
-        Ok(self.page_text(index)?.text)
+        Ok(self.scan(index)?.text().text)
     }
 
     fn annotations(&mut self, page: u32) -> Result<Vec<Annotation>, ReaderError> {
