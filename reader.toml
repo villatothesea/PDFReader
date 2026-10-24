@@ -4,8 +4,18 @@ version = "0.1.0"
 protocol = 1
 executable = "mireader-reader-pdf"
 extensions = ["pdf"]
-description = "Portable Document Format, rendered with hayro; extracts, reorders, splits and merges pages into new PDFs."
+description = "Portable Document Format, rendered with hayro; converts a text-based PDF to Markdown, and extracts, reorders, splits and merges pages into new PDFs."
 license = "MIT (MiReader); hayro: MIT/Apache-2.0; pdfcraft: MIT/Apache-2.0"
+
+# MimiReader round 18: Convert to Markdown, from the retired PDFInspector
+# (headings, paragraphs, lists and simple tables; scanned PDFs are refused).
+# Its Markdown is written beside the original.
+
+[[actions]]
+id = "pdf-to-markdown"
+title = "Convert to Markdown"
+extensions = ["pdf"]
+output = "md"
 
 # Round 17 (O6): the reader's own tools — page organising, moved here from
 # PDFInspector. Each writes a new PDF beside the original.

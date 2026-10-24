@@ -98,7 +98,8 @@ fn the_reader_reads_and_offers_its_page_tools() {
     let titles: Vec<String> = host.actions_for("D:/docs/Manual.PDF").into_iter().map(|a| a.action.title).collect();
     assert_eq!(
         titles,
-        ["Extract pages…", "Reorder pages…", "Split every N pages…", "Split before pages…", "Merge with other PDFs…"]
+        // MimiReader round 18: and Convert to Markdown, from the inspector.
+        ["Convert to Markdown", "Extract pages…", "Reorder pages…", "Split every N pages…", "Split before pages…", "Merge with other PDFs…"]
     );
 }
 
