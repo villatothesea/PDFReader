@@ -160,6 +160,172 @@ fn a_cancelled_job_writes_nothing() {
     assert!(matches!(&error, HostError::Reader(e) if e.code == ErrorCode::InvalidDocument && e.message.contains("broken.pdf")), "{error:?}");
 }
 
+/// Objects numbered from 1, a classic xref table and a trailer.
+fn write_pdf(objects: &[&str]) -> Vec<u8> {
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (ix, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n{body}\nendobj\n", ix + 1).into_bytes());
+    }
+    let xref = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).into_bytes());
+    for offset in offsets {
+        out.extend(format!("{offset:010} 00000 n \n").into_bytes());
+    }
+    out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).into_bytes());
+    out
+}
+
+/// Round 18 (#97): three pages (100, 110, 120 pt wide, as `numbered`) that
+/// link to each other every way a PDF can: page 1 straight to page 3, page
+/// 2 through the named destination `chap3` (a GoTo action), page 3 back to
+/// page 1 at a height; and a bookmark "Two" to page 2 holding "Three", to a
+/// point on page 3.
+fn linked() -> Vec<u8> {
+    write_pdf(&[
+        "<< /Type /Catalog /Pages 2 0 R /Names << /Dests << /Names [(chap3) [5 0 R /Fit]] >> >> /Outlines 9 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 200] /Annots [6 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 110 200] /Annots [7 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 200] /Annots [8 0 R] >>",
+        "<< /Type /Annot /Subtype /Link /Rect [10 10 50 50] /Dest [5 0 R /Fit] >>",
+        "<< /Type /Annot /Subtype /Link /Rect [10 10 50 50] /A << /S /GoTo /D (chap3) >> >>",
+        "<< /Type /Annot /Subtype /Link /Rect [10 10 50 50] /Dest [3 0 R /XYZ 0 150 0] >>",
+        "<< /Type /Outlines /First 10 0 R /Last 10 0 R /Count 2 >>",
+        "<< /Title (Two) /Parent 9 0 R /Dest [4 0 R /Fit] /First 11 0 R /Last 11 0 R /Count 1 >>",
+        "<< /Title (Three) /Parent 10 0 R /Dest [5 0 R /XYZ 0 100 0] >>",
+    ])
+}
+
+/// Each page's original number (by width) and where its links go — the
+/// target's index in this file and the original number of the page there.
+fn links_of(path: &Path) -> Vec<(u32, Vec<(u32, u32)>)> {
+    let mut doc = mireader_reader_pdf::PdfReader.open(path).unwrap();
+    let info = doc.info();
+    let original = |ix: u32| ((info.pages[ix as usize].width - 100.0) / 10.0).round() as u32 + 1;
+    (0..info.pages.len() as u32)
+        .map(|ix| {
+            let targets = doc
+                .page_text(ix)
+                .unwrap()
+                .links
+                .iter()
+                .filter_map(|link| match link.target {
+                    mireader_reader_sdk::LinkTarget::Page { page, .. } => Some((page, original(page))),
+                    _ => None,
+                })
+                .collect();
+            (original(ix), targets)
+        })
+        .collect()
+}
+
+/// The bookmarks, depth first: their depth (0 = top), title and the
+/// original number of the page each opens.
+fn outline_of(path: &Path) -> Vec<(usize, String, u32)> {
+    fn walk(entries: &[mireader_reader_sdk::OutlineEntry], depth: usize, widths: &[f32], out: &mut Vec<(usize, String, u32)>) {
+        for entry in entries {
+            if let mireader_reader_sdk::Target::Page(page) = entry.target {
+                out.push((depth, entry.title.clone(), ((widths[page as usize] - 100.0) / 10.0).round() as u32 + 1));
+            }
+            walk(&entry.children, depth + 1, widths, out);
+        }
+    }
+    let doc = mireader_reader_pdf::PdfReader.open(path).unwrap();
+    let info = doc.info();
+    let widths: Vec<f32> = info.pages.iter().map(|p| p.width).collect();
+    let mut out = Vec::new();
+    walk(&info.outline, 0, &widths, &mut out);
+    out
+}
+
+fn mark(depth: usize, title: &str, page: u32) -> (usize, String, u32) {
+    (depth, title.to_string(), page)
+}
+
+impl Run {
+    /// A job on any PDF: the files it wrote (pages unread — a real
+    /// document's pages don't say their number by width).
+    fn job_any(&self, action: &str, inputs: &[&Path], params: serde_json::Value) -> Result<(Vec<String>, ()), HostError> {
+        let out = tempfile::tempdir_in(self.dir.path()).unwrap().keep();
+        let job = ToolJob {
+            inputs: inputs.iter().map(|p| p.to_path_buf()).collect(),
+            params: params.as_object().cloned().unwrap_or_default(),
+            out_dir: Some(out),
+        };
+        Ok((self.host.run_tool_job("mireader.pdf", action, &job, &mut |_| {}, &AtomicBool::new(false))?.files, ()))
+    }
+
+    fn linked(&self, name: &str) -> std::path::PathBuf {
+        let path = self.dir.path().join(name);
+        std::fs::write(&path, linked()).unwrap();
+        path
+    }
+
+    /// The one file a job wrote.
+    fn one(&self, action: &str, inputs: &[&Path], params: serde_json::Value) -> std::path::PathBuf {
+        let out = tempfile::tempdir_in(self.dir.path()).unwrap().keep();
+        let job = ToolJob {
+            inputs: inputs.iter().map(|p| p.to_path_buf()).collect(),
+            params: params.as_object().cloned().unwrap_or_default(),
+            out_dir: Some(out),
+        };
+        let output = self.host.run_tool_job("mireader.pdf", action, &job, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        std::path::PathBuf::from(&output.files[0])
+    }
+}
+
+/// Round 18 (#97): links and named destinations follow the pages they point
+/// at through every operation — to the copy of the page, wherever it now
+/// sits; a link to a page left out is dropped, never left pointing at the
+/// wrong page. Bookmarks too.
+#[test]
+fn links_and_named_destinations_follow_their_pages() {
+    let run = Run::new();
+    let book = run.linked("book.pdf");
+    assert_eq!(links_of(&book), [(1, vec![(2, 3)]), (2, vec![(2, 3)]), (3, vec![(0, 1)])], "the source, as made");
+    assert_eq!(outline_of(&book), [mark(0, "Two", 2), mark(1, "Three", 3)]);
+
+    // Reorder 3, 1, 2: every link still reaches its own page, at its new place.
+    let reordered = run.one("reorder-pages", &[&book], serde_json::json!({ "order": "3, 1, 2" }));
+    assert_eq!(
+        links_of(&reordered),
+        [(3, vec![(1, 1)]), (1, vec![(0, 3)]), (2, vec![(0, 3)])],
+        "page 3 now first: 1→3 and the named chap3 point at index 0"
+    );
+    assert_eq!(outline_of(&reordered), [mark(0, "Two", 2), mark(1, "Three", 3)], "the bookmarks follow their pages");
+
+    // Extract 1 and 3: their links meet, and "Three" comes along — its
+    // parent's page didn't, so it moves up. Extract 2 alone: its link's page
+    // is gone, its own bookmark stays.
+    let ends = run.one("extract-pages", &[&book], serde_json::json!({ "pages": "1, 3" }));
+    assert_eq!(links_of(&ends), [(1, vec![(1, 3)]), (3, vec![(0, 1)])]);
+    assert_eq!(outline_of(&ends), [mark(0, "Three", 3)]);
+    let middle = run.one("extract-pages", &[&book], serde_json::json!({ "pages": "2" }));
+    assert_eq!(links_of(&middle), [(2, vec![])], "dropped, not pointing at the wrong page");
+    assert_eq!(outline_of(&middle), [mark(0, "Two", 2)]);
+    let pair = run.one("extract-pages", &[&book], serde_json::json!({ "pages": "3, 2" }));
+    assert_eq!(outline_of(&pair), [mark(0, "Two", 2), mark(1, "Three", 3)], "nested as it was, in the new order");
+
+    // Split before page 3: each part keeps the bookmarks of its own pages.
+    let out = tempfile::tempdir_in(run.dir.path()).unwrap();
+    let mut params = serde_json::Map::new();
+    params.insert("at".into(), "3".into());
+    let job = ToolJob { inputs: vec![book.clone()], params, out_dir: Some(out.path().to_path_buf()) };
+    let parts = run.host.run_tool_job("mireader.pdf", "split-at", &job, &mut |_| {}, &AtomicBool::new(false)).unwrap().files;
+    assert_eq!(outline_of(Path::new(&parts[0])), [mark(0, "Two", 2)]);
+    assert_eq!(outline_of(Path::new(&parts[1])), [mark(0, "Three", 3)]);
+
+    // Merge two copies: the second's links stay inside the second.
+    let copy = run.linked("copy.pdf");
+    let merged = run.one("merge", &[&book, &copy], serde_json::json!({}));
+    assert_eq!(
+        links_of(&merged),
+        [(1, vec![(2, 3)]), (2, vec![(2, 3)]), (3, vec![(0, 1)]), (1, vec![(5, 3)]), (2, vec![(5, 3)]), (3, vec![(3, 1)])]
+    );
+}
+
 /// Real manuals, for timings and a look at the parts:
 /// `MIREADER_TEST_PDF=<a.pdf> MIREADER_TEST_PDF2=<b.pdf>`.
 #[test]
@@ -178,4 +344,12 @@ fn organise_real_pdfs() {
     let (files, _) = run.job("merge", &[&a, &b], serde_json::json!({}), false).unwrap();
     eprintln!("merged into {} pages in {:?}", files[0].1.len(), started.elapsed());
     assert_eq!(files[0].1.len(), pages(&a) + pages(&b));
+    // Round 18 (#97): a reorder permutes the document's own pages, one move
+    // each — the worst case is a full reversal.
+    let n = pages(&a);
+    let reversed = format!("{n}-1");
+    let started = std::time::Instant::now();
+    let (files, _) = run.job_any("reorder-pages", &[&a], serde_json::json!({ "order": reversed })).unwrap();
+    eprintln!("reversed {n} pages in {:?}", started.elapsed());
+    assert_eq!(files.len(), 1);
 }
