@@ -454,3 +454,36 @@ fn real_links() {
     println!("total links: {total}");
     assert!(total > 0);
 }
+
+/// Round 18 (#99): where a printed page's time goes inside the reader —
+/// the raster (hayro) and its PNG encode, at the printer's 300 dpi:
+/// `MIREADER_TEST_PDF=<a.pdf> cargo test --release print_raster_parts -- --ignored --nocapture`.
+#[test]
+#[ignore = "needs a sample PDF"]
+fn print_raster_parts() {
+    use hayro::{PixmapSettings, RenderCache, RenderSettings, hayro_interpret::InterpreterSettings, vello_cpu::color::palette::css::WHITE};
+    let path = std::env::var("MIREADER_TEST_PDF").expect("MIREADER_TEST_PDF");
+    let doc = PdfDocument::new(std::fs::read(&path).unwrap()).unwrap();
+    let pages = doc.pdf.pages();
+    let count = pages.len().min(40);
+    let (mut raster, mut encode, mut bytes) = (std::time::Duration::ZERO, std::time::Duration::ZERO, 0usize);
+    for page in pages.iter().take(count) {
+        let (width, height) = page.render_dimensions();
+        let scale = clamp_scale(width, height, 300.0 / 72.0);
+        let started = std::time::Instant::now();
+        let pixmap = hayro::render(
+            page,
+            &RenderCache::new(),
+            &InterpreterSettings::default(),
+            &RenderSettings::default(),
+            &PixmapSettings { x_scale: scale, y_scale: scale, bg_color: WHITE },
+        );
+        raster += started.elapsed();
+        let started = std::time::Instant::now();
+        let png = pixmap.into_png().unwrap();
+        encode += started.elapsed();
+        bytes += png.len();
+    }
+    let per = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / count as f64;
+    eprintln!("{count} pages at 300 dpi: raster {:.1} ms/page, PNG encode {:.1} ms/page, {:.0} KB/page", per(raster), per(encode), bytes as f64 / 1e3 / count as f64);
+}
