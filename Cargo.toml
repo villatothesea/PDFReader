@@ -26,6 +26,8 @@ pdfcraft-model = { git = "https://github.com/storytold/pdfcraft", rev = "3e968c8
 mireader-reader-host = { path = "../MimiReader/crates/reader-host" }
 png = "0.18"
 tempfile = "3"
+# Round 17 (O6): the page tools' job parameters in tests/organize.rs.
+serde_json = "1"
 
 # A workspace of its own, so cargo never looks for one in a parent folder.
 [workspace]

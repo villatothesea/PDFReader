@@ -558,6 +558,7 @@ dependencies = [
  "pdfcraft-model",
  "pdfcraft-organize",
  "png",
+ "serde_json",
  "tempfile",
 ]
 

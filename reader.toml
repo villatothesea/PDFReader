@@ -4,5 +4,63 @@ version = "0.1.0"
 protocol = 1
 executable = "mireader-reader-pdf"
 extensions = ["pdf"]
-description = "Portable Document Format, rendered with hayro"
-license = "MIT (MiReader); hayro: MIT/Apache-2.0"
+description = "Portable Document Format, rendered with hayro; extracts, reorders, splits and merges pages into new PDFs."
+license = "MIT (MiReader); hayro: MIT/Apache-2.0; pdfcraft: MIT/Apache-2.0"
+
+# Round 17 (O6): the reader's own tools — page organising, moved here from
+# PDFInspector. Each writes a new PDF beside the original.
+
+[[actions]]
+id = "extract-pages"
+title = "Extract pages…"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "pages"
+label = "Pages"
+kind = "pages"
+required = true
+help = "For example 1-3, 7, 10-"
+
+[[actions]]
+id = "reorder-pages"
+title = "Reorder pages…"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "order"
+label = "New order"
+kind = "pages"
+required = true
+help = "For example 3, 1-2, 5 — pages left out follow in their order"
+
+[[actions]]
+id = "split-every"
+title = "Split every N pages…"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "every"
+label = "Pages per part"
+kind = "integer"
+default = 10
+min = 1
+
+[[actions]]
+id = "split-at"
+title = "Split before pages…"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "at"
+label = "Start a new part at"
+kind = "pages"
+required = true
+help = "For example 5, 12"
+
+[[actions]]
+id = "merge"
+title = "Merge with other PDFs…"
+extensions = ["pdf"]
+inputs = "many"
+files = "pdf"

@@ -13,6 +13,8 @@ mod links;
 mod edit;
 mod recolor;
 mod scan;
+// Round 17 (O6): page organising — the reader's own tools.
+pub mod organize;
 
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
@@ -62,6 +64,12 @@ impl Reader for PdfReader {
         doc.editor = edit::Editor::open(path, Arc::new(bytes), password);
         doc.password = password.map(str::to_owned);
         Ok(Box::new(doc))
+    }
+
+    /// Round 17 (O6): the reader also acts — extract, reorder, split and
+    /// merge pages (its manifest's `[[actions]]`).
+    fn run_job(&mut self, job: &mut mireader_reader_sdk::Job<'_>) -> Result<mireader_reader_sdk::ToolOutput, ReaderError> {
+        organize::run(job)
     }
 }
 
