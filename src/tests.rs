@@ -65,12 +65,35 @@ fn an_identity_to_unicode_name_gives_the_codes_as_text() {
 #[test]
 fn an_embedded_fonts_cmap_names_glyphs_that_have_no_to_unicode() {
     use skrifa::MetadataProvider as _;
-    let windows = std::env::var_os("WINDIR").map(std::path::PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
-    let Ok(font) = std::fs::read(windows.join(r"Fonts\arial.ttf")) else { return };
+    let Some(font) = system_arial() else { return };
     let charmap = skrifa::FontRef::new(&font).unwrap().charmap();
     let glyphs: Vec<u32> = "Hi".chars().map(|c| charmap.map(c).unwrap().to_u32()).collect();
     let mut doc = PdfDocument::new(fixtures::build_embedded_identity(&font, &glyphs)).unwrap();
     assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
+}
+
+/// Round 19 (the corpus sweep, vertical, issue13147 and three more pages):
+/// an embedded CID font of a known collection (here Adobe-Japan1) with no
+/// ToUnicode gave no text. hayro had the collection's CID → Unicode table
+/// but used it only for a stand-in font (vendored patch 4). CIDs 41 and 74
+/// are "H" and "i" in Adobe-Japan1; the fixture draws glyph 0 for both, so
+/// nothing else can name them.
+#[test]
+fn an_embedded_cid_font_of_a_known_collection_has_text() {
+    let Some(font) = system_arial() else { return };
+    let mut doc = PdfDocument::new(fixtures::build_embedded_collection(&font, "Japan1", &[41, 74])).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
+}
+
+/// The system's Arial, embedded by the tests above (no font is committed).
+/// Missing only off Windows: there the tests skip, and say so.
+fn system_arial() -> Option<Vec<u8>> {
+    let windows = std::env::var_os("WINDIR").map(std::path::PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
+    let font = std::fs::read(windows.join("Fonts").join("arial.ttf")).ok();
+    if font.is_none() {
+        eprintln!("skipped: no system Arial to embed");
+    }
+    font
 }
 
 /// Round 19 (the corpus sweep, text-layer group 2): a Type 3 font without

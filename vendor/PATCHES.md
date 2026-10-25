@@ -69,6 +69,22 @@ already says, and has a test that fails without it.
   in both directions: a tight run stays one word, and a TJ word gap still
   gives a space.
 
+### 4. An embedded CID font of a known collection takes its UCS2 table
+
+- **File:** `hayro-interpret/src/font/cid.rs`, `Type0Font::new`: one guard
+  (`fallback &&`) dropped.
+- **Why:** a CID font of Adobe-Japan1, -GB1, -CNS1 or -Korea1 with no
+  ToUnicode has its text in the collection's CID → Unicode table, which
+  hayro ships. hayro attached that table only to a stand-in font, so an
+  embedded one gave no text (vertical, arial_unicode_en_cidfont,
+  issue11768, issue13147, issue16176; xpdf prints codes on all five).
+- **Change:** the table is attached whenever there is no ToUnicode. Glyph
+  selection still uses it only for a stand-in, because `map_code` checks
+  `fallback` itself. So this changes text, never drawing.
+- **Test:** PDFReader `an_embedded_cid_font_of_a_known_collection_has_text`
+  (its fixture draws glyph 0 for every CID, so no other path can name
+  them).
+
 ### Considered and not made
 
 - **A ToUnicode stream compressed without a /Filter** (issue19802). The fix

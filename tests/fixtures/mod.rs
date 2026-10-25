@@ -191,7 +191,21 @@ pub fn build_identity_to_unicode() -> Vec<u8> {
 /// an Identity ordering and no ToUnicode — only the font's own cmap says
 /// what they are.
 pub fn build_embedded_identity(font: &[u8], glyphs: &[u32]) -> Vec<u8> {
-    let codes: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
+    build_embedded_cid(font, "Identity", glyphs, "/Identity")
+}
+
+/// Round 19 (the corpus sweep, vertical, issue13147 and three more pages):
+/// `cids` in an embedded TrueType CID font of the Adobe-`ordering`
+/// collection, with no ToUnicode. Every CID draws glyph 0 (a CIDToGIDMap of
+/// zeros), so the font's own cmap can't name them either: only the
+/// collection's CID → Unicode table says what they are.
+pub fn build_embedded_collection(font: &[u8], ordering: &str, cids: &[u32]) -> Vec<u8> {
+    build_embedded_cid(font, ordering, cids, "9 0 R")
+}
+
+fn build_embedded_cid(font: &[u8], ordering: &str, cids: &[u32], cid_to_gid: &str) -> Vec<u8> {
+    let codes: String = cids.iter().map(|g| format!("{g:04X}")).collect();
+    let zeros = vec![0_u8; 2 * (cids.iter().copied().max().unwrap_or(0) as usize + 1)];
     write_pdf(
         &[
             b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
@@ -199,9 +213,10 @@ pub fn build_embedded_identity(font: &[u8], glyphs: &[u32]) -> Vec<u8> {
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
             stream("", format!("BT /F1 40 Tf 20 30 Td <{codes}> Tj ET\n").as_bytes()),
             b"<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+Arial /Encoding /Identity-H /DescendantFonts [6 0 R] >>".to_vec(),
-            b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /ABCDEF+Arial /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /CIDToGIDMap /Identity /FontDescriptor 7 0 R /DW 600 >>".to_vec(),
+            format!("<< /Type /Font /Subtype /CIDFontType2 /BaseFont /ABCDEF+Arial /CIDSystemInfo << /Registry (Adobe) /Ordering ({ordering}) /Supplement 0 >> /CIDToGIDMap {cid_to_gid} /FontDescriptor 7 0 R /DW 600 >>").into_bytes(),
             b"<< /Type /FontDescriptor /FontName /ABCDEF+Arial /Flags 32 /FontBBox [-665 -325 2000 1006] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 80 /FontFile2 8 0 R >>".to_vec(),
             stream(&format!("/Length1 {}", font.len()), font),
+            stream("", &zeros),
         ],
         "",
     )

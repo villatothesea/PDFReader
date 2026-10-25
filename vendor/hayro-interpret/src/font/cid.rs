@@ -1,3 +1,4 @@
+// Modified by MimiReader: an embedded CID font of a known collection takes its UCS2 table when it has no ToUnicode (patch 4). See vendor/PATCHES.md.
 use crate::font::blob::{CffFontBlob, OpenTypeFontBlob, Type1FontBlob};
 use crate::font::generated::glyph_names;
 use crate::font::standard_font::select_standard_font;
@@ -116,8 +117,10 @@ impl Type0Font {
         let mut to_unicode_is_cid_indexed = false;
 
         // If there is no ToUnicode map, try to get the UCS2 CMap.
-        if fallback
-            && to_unicode.is_none()
+        // MimiReader patch 4: for an embedded font too, not only a stand-in.
+        // Glyph selection still uses it only for a stand-in (`map_code`
+        // checks `fallback` itself), so this changes text, never drawing.
+        if to_unicode.is_none()
             && let Some(cc) = character_collection.as_ref()
             && let Some(ucs2_name) = cc.family.ucs2_cmap()
             && let Some(data) = (cmap_resolver)(ucs2_name)
