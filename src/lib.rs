@@ -13,6 +13,8 @@ mod links;
 mod edit;
 mod recolor;
 mod scan;
+// Round 19 (the corpus sweep): a system font for non-embedded CJK text.
+mod fallback;
 // MimiReader round 19 (O12, T1 item 6): Document Properties.
 mod properties;
 // Round 17 (O6): page organising — the reader's own tools.
@@ -266,7 +268,7 @@ impl Document for PdfDocument {
         let mut pixmap = hayro::render(
             page,
             &RenderCache::new(),
-            &InterpreterSettings::default(),
+            &crate::fallback::settings(),
             &RenderSettings::default(),
             &PixmapSettings {
                 x_scale: scale,

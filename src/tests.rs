@@ -16,6 +16,24 @@ fn reads_page_sizes_and_metadata() {
     assert_eq!(info.author.as_deref(), Some("Pat Printer"));
 }
 
+/// Round 19 (the corpus sweep, noembed-sjis): Japanese text whose font isn't
+/// embedded is drawn, in the system's Japanese font — it drew nothing while
+/// its text could be selected. (Skips where the system has no such font.)
+#[test]
+fn non_embedded_japanese_is_drawn() {
+    if !crate::fallback::has_font_for(&hayro::hayro_interpret::hayro_cmap::CidFamily::AdobeJapan1) {
+        eprintln!("skipped: no Japanese system font here");
+        return;
+    }
+    let mut doc = PdfDocument::new(fixtures::build_noembed_cjk()).unwrap();
+    let page = doc.render_page(0, 2.0).unwrap();
+    let (pixels, _) = fixtures::pixels(&page.png);
+    let ink = pixels.iter().filter(|p| p[0] < 128 && p[1] < 128 && p[2] < 128).count();
+    assert!(ink > 200, "the text is drawn: {ink} dark pixels");
+    let text = doc.page_text(0).unwrap().text;
+    assert!(text.contains("日本"), "and reads as itself: {text:?}");
+}
+
 /// Round 19 (the corpus sweep, issue1350): a page's text is what its crop
 /// box shows. Two pages drawing the same content through different crop
 /// boxes each give only their own half — the text layer gave every page

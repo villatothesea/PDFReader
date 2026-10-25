@@ -71,7 +71,7 @@ impl Scan {
             Rect::new(0.0, 0.0, width as f64, height as f64),
             cache,
             page.xref(),
-            InterpreterSettings::default(),
+            crate::fallback::settings(),
         );
         let mut collector = Collector::new(Rect::new(0.0, 0.0, width as f64, height as f64));
         interpret_page(page, &mut context, &mut collector);

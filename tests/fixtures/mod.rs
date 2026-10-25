@@ -129,6 +129,24 @@ pub fn build_linked() -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, noembed-sjis): Japanese text — "日本",
+/// <93FA967B> in Shift-JIS — in a Type0 font that isn't embedded (Adobe-Japan1,
+/// 90ms-RKSJ-H, no font file): the reader has to bring a font for it.
+pub fn build_noembed_cjk() -> Vec<u8> {
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+            stream("", b"BT /F1 40 Tf 20 30 Td <93FA967B> Tj ET\n"),
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /MS-Gothic /Encoding /90ms-RKSJ-H /DescendantFonts [6 0 R] >>".to_vec(),
+            b"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /MS-Gothic /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> /FontDescriptor 7 0 R /DW 1000 >>".to_vec(),
+            b"<< /Type /FontDescriptor /FontName /MS-Gothic /Flags 4 /FontBBox [0 -141 1000 859] /ItalicAngle 0 /Ascent 859 /Descent -141 /CapHeight 769 /StemV 80 >>".to_vec(),
+        ],
+        "",
+    )
+}
+
 /// Round 19 (the corpus sweep, issue1350): two pages that draw the same
 /// content — "Top half" at y 150, "Bottom half" at y 50 — each showing a
 /// different region of it through its CropBox (top, then bottom).
