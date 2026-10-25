@@ -111,6 +111,17 @@ fn fields_and_comments_without_appearances_are_drawn() {
     assert!(red[0] > 180 && red[1] < 90 && red[2] < 90, "the square comment's red border: {red:?}");
 }
 
+/// Round 19 (the corpus sweep, text_field_own_canvas_calc p3): under
+/// /NeedAppearances a field with no value keeps the appearance it has —
+/// redrawing it from its empty value wiped a calculated field's result.
+#[test]
+fn a_field_without_a_value_keeps_its_own_appearance() {
+    let mut doc = PdfDocument::new(fixtures::build_need_appearances_own_look()).unwrap();
+    let page = doc.render_page(0, 2.0).unwrap();
+    let inside = fixtures::pixel(&page.png, 200, 100);
+    assert!(inside[..3].iter().all(|c| *c < 60), "its own black box is still drawn: {inside:?}");
+}
+
 /// The system's Arial, embedded by the tests above (no font is committed).
 /// Missing only off Windows: there the tests skip, and say so.
 fn system_arial() -> Option<Vec<u8>> {

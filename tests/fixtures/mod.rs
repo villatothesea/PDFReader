@@ -306,6 +306,26 @@ pub fn build_without_appearances() -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, text_field_own_canvas_calc): a form that
+/// sets /NeedAppearances, with a text field that has no value (/V) but an
+/// appearance of its own — a black box over rect 20 20 180 80, as a
+/// calculated field is drawn.
+pub fn build_need_appearances_own_look() -> Vec<u8> {
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << >> /Annots [5 0 R] >>".to_vec(),
+            stream("", b""),
+            b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (total) /DA (/Helv 12 Tf 0 g) /Rect [20 20 180 80] /P 3 0 R /F 4 /AP << /N 8 0 R >> >>".to_vec(),
+            b"<< /Fields [5 0 R] /NeedAppearances true /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 7 0 R >> >> >>".to_vec(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
+            stream("/Type /XObject /Subtype /Form /BBox [0 0 160 60]", b"0 g 0 0 160 60 re f\n"),
+        ],
+        "",
+    )
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),
