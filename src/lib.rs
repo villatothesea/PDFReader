@@ -17,6 +17,8 @@ mod scan;
 pub mod organize;
 // MimiReader round 18: Convert to Markdown, from the retired PDFInspector.
 pub mod convert;
+// MimiReader round 19 (O12): pages as images, the text layer as plain text.
+pub mod export;
 
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
@@ -74,6 +76,9 @@ impl Reader for PdfReader {
     fn run_job(&mut self, job: &mut mireader_reader_sdk::Job<'_>) -> Result<mireader_reader_sdk::ToolOutput, ReaderError> {
         if job.action == convert::ACTION {
             return convert::run(job);
+        }
+        if matches!(job.action, export::TO_TEXT | export::TO_IMAGES) {
+            return export::run(job);
         }
         organize::run(job)
     }
