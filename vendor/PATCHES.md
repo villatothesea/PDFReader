@@ -22,7 +22,18 @@ Each modified file says so on its first line (Apache-2.0 §4(b)):
 Every patch is as small as it can be, only reads more of what the file
 already says, and has a test that fails without it.
 
-None yet.
+### 1. A Type 3 glyph without ToUnicode takes its text from its Encoding name
+
+- **File:** `hayro-interpret/src/font/type3.rs`, `Type3::char_code_to_unicode`.
+- **Why:** hayro gave a Type 3 glyph text only through a ToUnicode CMap. Most
+  Type 3 fonts have none, but their Encoding names each glyph from the Adobe
+  Glyph List, which is how hayro already reads Type 1 fonts. Pages set in
+  such fonts had no text layer (issue918, issue3188, issue5896, pr4922 and
+  six more pages in the pdf.js corpus).
+- **Change:** without a ToUnicode entry for the code, the Encoding's name
+  for it goes through hayro's own `glyph_name_to_unicode`. Text only;
+  drawing is unchanged.
+- **Test:** PDFReader `a_type3_fonts_glyph_names_are_its_text`.
 
 ### Considered and not made
 

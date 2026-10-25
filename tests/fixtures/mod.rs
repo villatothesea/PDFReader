@@ -207,6 +207,25 @@ pub fn build_embedded_identity(font: &[u8], glyphs: &[u32]) -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, text-layer group 2, issue918 and nine more
+/// pages): "Hi" in a Type 3 font with no ToUnicode. Its Encoding names the
+/// glyphs /H and /i; only those names say what they are. The glyphs are
+/// 500 units wide, the advance the scan assumes for Type 3 (it reads no
+/// widths yet), so the test is about the text, not its spacing.
+pub fn build_type3_named() -> Vec<u8> {
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+            stream("", b"BT /F1 40 Tf 20 30 Td <0102> Tj ET\n"),
+            b"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 500 700] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /H 6 0 R /i 6 0 R >> /Encoding << /Type /Encoding /Differences [1 /H /i] >> /FirstChar 1 /LastChar 2 /Widths [500 500] >>".to_vec(),
+            stream("", b"750 0 0 0 750 750 d1 0 0 750 750 re f\n"),
+        ],
+        "",
+    )
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),

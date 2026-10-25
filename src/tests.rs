@@ -73,6 +73,15 @@ fn an_embedded_fonts_cmap_names_glyphs_that_have_no_to_unicode() {
     assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
 }
 
+/// Round 19 (the corpus sweep, text-layer group 2): a Type 3 font without
+/// ToUnicode gave no text, though its Encoding names every glyph. hayro
+/// read only the ToUnicode (vendored patch 1 adds the names).
+#[test]
+fn a_type3_fonts_glyph_names_are_its_text() {
+    let mut doc = PdfDocument::new(fixtures::build_type3_named()).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
+}
+
 #[test]
 fn renders_pages_at_the_requested_scale() {
     let mut doc = PdfDocument::new(fixtures::build()).unwrap();

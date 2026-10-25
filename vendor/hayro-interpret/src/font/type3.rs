@@ -1,9 +1,12 @@
+// Modified by MimiReader: a Type3 glyph without ToUnicode takes its text from its Encoding name (patch 1). See vendor/PATCHES.md.
 use crate::CMapResolverFn;
 use crate::context::Context;
 use crate::device::Device;
 use crate::font::glyph_simulator::GlyphSimulator;
 use crate::font::true_type::{Width, read_encoding, read_widths};
-use crate::font::{Encoding, GlyphRun, Type3Glyph, UNITS_PER_EM, read_to_unicode};
+use crate::font::{
+    Encoding, GlyphRun, Type3Glyph, UNITS_PER_EM, glyph_name_to_unicode, read_to_unicode,
+};
 use crate::interpret::state::TextState;
 use crate::util::RectExt;
 use crate::x_object::soft_mask::SoftMask;
@@ -96,10 +99,22 @@ impl<'a> Type3<'a> {
     }
 
     pub(crate) fn char_code_to_unicode(&self, char_code: u32) -> Option<BfString> {
-        // Type3 fonts can only provide Unicode via ToUnicode CMap.
+        // MimiReader patch 1: without a ToUnicode CMap, the glyph's name in
+        // the font's Encoding, as for Type1 fonts (most Type3 fonts name
+        // their glyphs from the Adobe Glyph List). Text only; drawing is
+        // unchanged.
         self.to_unicode
             .as_ref()
             .and_then(|t| t.lookup_bf_string(char_code))
+            .or_else(|| {
+                let code = u8::try_from(char_code).ok()?;
+                let name = self
+                    .encodings
+                    .get(&code)
+                    .map(String::as_str)
+                    .or_else(|| self.encoding.map_code(code))?;
+                glyph_name_to_unicode(name).map(BfString::Char)
+            })
     }
 
     pub(crate) fn render_glyph(
