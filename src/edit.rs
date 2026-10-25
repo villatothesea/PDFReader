@@ -232,6 +232,12 @@ impl Editor {
         }
     }
 
+    /// MimiReader round 19 (O12, T1 item 6): the document as it stands now
+    /// (its properties are read from it).
+    pub(crate) fn document(&self) -> &Cos {
+        &self.current.doc
+    }
+
     pub(crate) fn info(&self) -> EditInfo {
         EditInfo { kinds: self.kinds.clone(), guard: self.guard.clone(), state: self.state() }
     }

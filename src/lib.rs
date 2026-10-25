@@ -13,6 +13,8 @@ mod links;
 mod edit;
 mod recolor;
 mod scan;
+// MimiReader round 19 (O12, T1 item 6): Document Properties.
+mod properties;
 // Round 17 (O6): page organising — the reader's own tools.
 pub mod organize;
 // MimiReader round 18: Convert to Markdown, from the retired PDFInspector.
@@ -219,6 +221,20 @@ impl Document for PdfDocument {
         let mut info = self.info.clone();
         info.edit = self.editor.as_ref().map(edit::Editor::info);
         info
+    }
+
+    /// MimiReader round 19 (O12, T1 item 6): read through pdfcraft (the
+    /// editor's copy, which is current after edits); without it, what the
+    /// renderer read.
+    fn properties(&mut self) -> Result<mireader_reader_sdk::DocumentProperties, ReaderError> {
+        Ok(match &self.editor {
+            Some(editor) => properties::read(editor.document()),
+            None => mireader_reader_sdk::DocumentProperties {
+                title: self.info.title.clone(),
+                author: self.info.author.clone(),
+                ..Default::default()
+            },
+        })
     }
 
     fn render_page(&mut self, page: u32, scale: f32) -> Result<RenderedPage, ReaderError> {
