@@ -202,6 +202,45 @@ mod editing {
         [x0, y0, x1, y0, x0, y1, x1, y1]
     }
 
+    /// Round 19 (T1 item 6): the four Info fields, set in one step — one
+    /// undo puts them all back — and saved as an incremental update: the
+    /// original file is still the saved file's first bytes, and reopening
+    /// reads the new values; an empty field is removed.
+    #[test]
+    fn info_fields_are_one_undo_step_and_an_appended_update() {
+        let original = fixtures::build_rich();
+        let (_dir, path) = file(&original);
+        let mut doc = open(&path);
+        let before = doc.properties().unwrap();
+        let set = |title: &str, author: &str| EditOp::SetInfo {
+            title: title.into(),
+            author: author.into(),
+            subject: "Field notes".into(),
+            keywords: "".into(),
+        };
+        let (state, _) = doc.edit(set("新しい題名 New title", "Ada")).unwrap();
+        assert!(state.dirty && state.can_undo);
+        let now = doc.properties().unwrap();
+        assert_eq!(now.title.as_deref(), Some("新しい題名 New title"));
+        assert_eq!(now.author.as_deref(), Some("Ada"));
+        assert_eq!(now.subject.as_deref(), Some("Field notes"));
+        assert_eq!(now.keywords, None, "an empty field is removed");
+
+        // One step: one undo restores every field.
+        doc.undo().unwrap();
+        let undone = doc.properties().unwrap();
+        assert_eq!((undone.title, undone.author, undone.subject, undone.keywords), (before.title, before.author, before.subject, before.keywords));
+        doc.redo().unwrap();
+
+        doc.save().unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        assert!(saved.len() > original.len() && saved.starts_with(&original), "appended: the original bytes are intact");
+        let reopened = open(&path).properties().unwrap();
+        assert_eq!(reopened.title.as_deref(), Some("新しい題名 New title"));
+        assert_eq!(reopened.author.as_deref(), Some("Ada"));
+        assert_eq!(reopened.keywords, None);
+    }
+
     /// A highlight over the text layer's first line, a note, a recolour, a
     /// bookmark — undone, redone, saved as an incremental update and read
     /// back from the file.
@@ -211,7 +250,7 @@ mod editing {
         let (_dir, path) = file(&original);
         let mut doc = open(&path);
         let edit = doc.info().edit.expect("editable");
-        assert_eq!(edit.kinds, vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark]);
+        assert_eq!(edit.kinds, vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark, EditKind::Info]);
         assert!(edit.guard.is_none());
 
         let quad = first_line(&mut doc);

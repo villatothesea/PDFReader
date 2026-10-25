@@ -174,7 +174,8 @@ impl Editor {
     /// can't read the file well enough to write it back.
     pub(crate) fn open(path: &Path, bytes: Arc<Vec<u8>>, password: Option<&str>) -> Option<Editor> {
         let doc = Cos::open_with_password(bytes.clone(), password).ok()?;
-        let mut kinds = vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark];
+        // Round 19 (T1 item 6): and the Info dictionary's four fields.
+        let mut kinds = vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark, EditKind::Info];
         let mut guard = None;
         if let Some(permissions) = doc.permissions()
             && !(permissions.annotate() && permissions.modify())
@@ -464,7 +465,16 @@ impl Editor {
                 pdfcraft_organize::delete_bookmark(doc, &path).map_err(failed)?;
                 Ok(None)
             }
+            EditOp::SetInfo { title, author, subject, keywords } => {
+                set_info(doc, [("Title", title), ("Author", author), ("Subject", subject), ("Keywords", keywords)])?;
+                Ok(None)
+            }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn current_doc(&self) -> &Cos {
+        &self.current.doc
     }
 
     pub(crate) fn undo(&mut self) -> bool {
@@ -531,5 +541,35 @@ impl Editor {
         self.disk_bytes = bytes;
         self.disk = OnDisk::of(path);
         Ok(())
+    }
+}
+
+/// Round 19 (T1 item 6): the Info dictionary's descriptive fields, set (an
+/// empty one removed). An indirect Info is updated in place, so the saved
+/// update carries just that object; a missing or direct one becomes a new
+/// object the trailer points to. The writer stamps ModDate.
+fn set_info(doc: &mut Cos, fields: [(&str, String); 4]) -> Result<(), ReaderError> {
+    let apply = |info: &mut Dict| {
+        for (key, value) in &fields {
+            let value = value.trim();
+            if value.is_empty() {
+                info.remove(key.as_bytes());
+            } else {
+                info.set(*key, Object::String(pdfcraft_cos::PdfString::text(value)));
+            }
+        }
+    };
+    match doc.trailer().get(b"Info").cloned() {
+        Some(Object::Ref(info)) => doc.update_dict(info, apply).map_err(failed),
+        existing => {
+            let mut info = match existing {
+                Some(Object::Dict(dict)) => dict,
+                _ => Dict::new(),
+            };
+            apply(&mut info);
+            let info = doc.add(Object::Dict(info));
+            doc.trailer_mut().set("Info", Object::Ref(info));
+            Ok(())
+        }
     }
 }
