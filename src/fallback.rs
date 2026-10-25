@@ -56,6 +56,7 @@ fn system_font(names: &[&'static str]) -> Option<(FontData, u32)> {
 }
 
 /// Whether this system has a stand-in for `family` (tests skip without one).
+#[cfg(test)]
 pub(crate) fn has_font_for(family: &CidFamily) -> bool {
     system_font(candidates(family)).is_some()
 }

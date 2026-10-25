@@ -10,7 +10,7 @@
 
 use hayro::hayro_interpret::{
     BlendMode, ClipPath, Context, Device, DrawMode, DrawProps, Image, ImageDrawProps,
-    InterpreterCache, InterpreterSettings, Paint, SoftMask, TransformExt as _,
+    InterpreterCache, Paint, SoftMask, TransformExt as _,
     font::{Glyph, GlyphRun},
     interpret_page,
 };
@@ -345,4 +345,96 @@ fn separator(prev: &ScannedGlyph, next: &ScannedGlyph) -> Option<char> {
         (false, _, false) => -next.rect.y1,
     };
     (next_start - prev_end > 0.15 * size).then_some(' ')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hayro::hayro_syntax::Pdf;
+
+    /// What a page's glyphs gave the text layer, by font mechanism.
+    #[derive(Default)]
+    struct Probe {
+        outline: usize,
+        outline_mapped: usize,
+        outline_with_data: usize,
+        type3: usize,
+        type3_mapped: usize,
+        paths: usize,
+        images: usize,
+    }
+
+    impl<'a> Device<'a> for Probe {
+        fn draw_path(&mut self, _: &BezPath, _: DrawProps<'a>, _: &DrawMode) {
+            self.paths += 1;
+        }
+        fn push_clip_path(&mut self, _: &ClipPath) {}
+        fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'a>>, _: BlendMode) {}
+        fn draw_glyph_run(&mut self, run: &GlyphRun<'_, 'a>, _: DrawProps<'a>, _: &DrawMode) {
+            for glyph in run.glyphs() {
+                match &**glyph {
+                    Glyph::Outline(outline) => {
+                        self.outline += 1;
+                        self.outline_mapped += usize::from(outline.as_unicode().is_some());
+                        self.outline_with_data += usize::from(outline.font_data().is_some());
+                    }
+                    Glyph::Type3(type3) => {
+                        self.type3 += 1;
+                        self.type3_mapped += usize::from(type3.as_unicode().is_some());
+                    }
+                }
+            }
+        }
+        fn draw_image(&mut self, _: Image<'a, '_>, _: ImageDrawProps<'a>) {
+            self.images += 1;
+        }
+        fn pop_clip(&mut self) {}
+        fn pop_transparency_group(&mut self) {}
+    }
+
+    /// Round 19 (the corpus sweep): per listed page (`path<TAB>page`, 1-based),
+    /// how many glyphs were drawn and how many gave text — a report for
+    /// grouping empty text layers by cause, not a check.
+    /// `MIREADER_GLYPH_LIST=… MIREADER_GLYPH_OUT=… cargo test --lib glyph_mapping_report -- --ignored`.
+    #[test]
+    #[ignore = "a report over the corpus, not a check"]
+    fn glyph_mapping_report() {
+        let (Ok(list), Ok(out)) = (std::env::var("MIREADER_GLYPH_LIST"), std::env::var("MIREADER_GLYPH_OUT")) else { return };
+        let mut lines = Vec::new();
+        for line in std::fs::read_to_string(list).unwrap_or_default().lines() {
+            let Some((path, page)) = line.trim().split_once('\t') else { continue };
+            let Ok(page) = page.parse::<usize>() else { continue };
+            let Ok(bytes) = std::fs::read(path) else { continue };
+            let Ok(pdf) = Pdf::new(bytes) else {
+                lines.push(format!("{path}\t{page}\tunopenable"));
+                continue;
+            };
+            let Some(page_obj) = pdf.pages().get(page - 1) else {
+                lines.push(format!("{path}\t{page}\tno such page"));
+                continue;
+            };
+            let (width, height) = page_obj.render_dimensions();
+            let cache = InterpreterCache::new();
+            let mut context = Context::new(
+                page_obj.initial_transform(true).to_kurbo(),
+                Rect::new(0.0, 0.0, width as f64, height as f64),
+                &cache,
+                page_obj.xref(),
+                crate::fallback::settings(),
+            );
+            let mut probe = Probe::default();
+            interpret_page(page_obj, &mut context, &mut probe);
+            lines.push(format!(
+                "{path}\t{page}\toutline={} mapped={} data={} type3={} t3mapped={} paths={} images={}",
+                probe.outline,
+                probe.outline_mapped,
+                probe.outline_with_data,
+                probe.type3,
+                probe.type3_mapped,
+                probe.paths,
+                probe.images
+            ));
+        }
+        let _ = std::fs::write(out, lines.join("\n"));
+    }
 }

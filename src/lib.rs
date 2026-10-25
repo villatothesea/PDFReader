@@ -28,7 +28,7 @@ use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use hayro::{
     PixmapSettings, RenderCache, RenderSettings,
-    hayro_interpret::{InterpreterCache, InterpreterSettings},
+    hayro_interpret::InterpreterCache,
     hayro_syntax::{LoadPdfError, Pdf},
     kurbo::Rect,
     vello_cpu::color::palette::css::{TRANSPARENT, WHITE},

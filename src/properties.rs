@@ -250,6 +250,101 @@ mod tests {
     #[path = "../../../tests/fixtures/mod.rs"]
     mod fixtures;
 
+    /// Round 19 (the corpus sweep): what kind of font each listed file's
+    /// pages use — a report for grouping text-layer gaps by mechanism, not
+    /// a check. `MIREADER_FONT_LIST=<file of paths> MIREADER_FONT_OUT=<file>
+    /// cargo test --lib font_mechanisms_report -- --ignored`.
+    #[test]
+    #[ignore = "a report over the corpus, not a check"]
+    fn font_mechanisms_report() {
+        let (Ok(list), Ok(out)) = (std::env::var("MIREADER_FONT_LIST"), std::env::var("MIREADER_FONT_OUT")) else { return };
+        let mut lines = Vec::new();
+        for path in std::fs::read_to_string(list).unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let Ok(bytes) = std::fs::read(path) else { continue };
+            let Ok(doc) = Cos::open(std::sync::Arc::new(bytes)) else {
+                lines.push(format!("{path}\tunopenable"));
+                continue;
+            };
+            let mut found = BTreeMap::new();
+            let mut seen = HashSet::new();
+            for page in pdfcraft_model::pages(&doc).iter().take(3) {
+                if let Some(resources) = page.dict.get(b"Resources") {
+                    signatures(&doc, resources, 0, &mut seen, &mut found);
+                }
+            }
+            let sigs: Vec<String> = found.into_iter().map(|(sig, n)| format!("{sig} x{n}")).collect();
+            lines.push(format!("{path}\t{}", sigs.join(" ; ")));
+        }
+        let _ = std::fs::write(out, lines.join("\n"));
+    }
+
+    fn signatures(doc: &Cos, resources: &Object, depth: usize, seen: &mut HashSet<(u32, u16)>, found: &mut BTreeMap<String, usize>) {
+        if let Some(r) = resources.as_ref()
+            && !seen.insert((r.num, r.generation))
+        {
+            return;
+        }
+        let Some(resources) = doc.dict(resources) else { return };
+        if let Some(fonts) = resources.get(b"Font").and_then(|f| doc.dict(f)) {
+            for (_, font) in fonts.iter() {
+                let Some(dict) = doc.dict(font) else { continue };
+                let name = |d: &Dict, key: &[u8]| d.name(key).map(|n| String::from_utf8_lossy(n).into_owned());
+                let subtype = name(&dict, b"Subtype").unwrap_or_default();
+                let encoding = match dict.get(b"Encoding").map(|e| doc.resolve(e)) {
+                    Some(e) if e.as_name().is_some() => e.as_name().map(|n| String::from_utf8_lossy(n).into_owned()).unwrap_or_default(),
+                    Some(e) if e.as_dict().is_some() => "dict".into(),
+                    Some(_) => "other".into(),
+                    None => "none".into(),
+                };
+                let to_unicode = match dict.get(b"ToUnicode").map(|t| doc.resolve(t)) {
+                    Some(t) if t.as_name().is_some() => format!("tounicode=/{}", String::from_utf8_lossy(t.as_name().unwrap_or_default())),
+                    Some(_) => "tounicode=stream".into(),
+                    None => "no-tounicode".into(),
+                };
+                let (kind, descriptor) = if subtype == "Type0" {
+                    let descendant = dict
+                        .get(b"DescendantFonts")
+                        .map(|d| doc.resolve(d))
+                        .and_then(|d| d.as_array().and_then(|a| a.first().cloned()))
+                        .and_then(|d| doc.dict(&d));
+                    let ordering = descendant
+                        .as_ref()
+                        .and_then(|d| d.get(b"CIDSystemInfo").and_then(|c| doc.dict(c)))
+                        .and_then(|c| doc.resolve(c.get(b"Ordering")?).as_string().map(|s| String::from_utf8_lossy(&s.bytes).into_owned()))
+                        .unwrap_or_default();
+                    let sub = descendant.as_ref().and_then(|d| name(d, b"Subtype")).unwrap_or_default();
+                    (format!("Type0/{sub}/{ordering}"), descendant.and_then(|d| d.get(b"FontDescriptor").and_then(|f| doc.dict(f))))
+                } else {
+                    (subtype.clone(), dict.get(b"FontDescriptor").and_then(|f| doc.dict(f)))
+                };
+                let file = match descriptor {
+                    Some(fd) if fd.get(b"FontFile").is_some() => "FontFile".to_string(),
+                    Some(fd) if fd.get(b"FontFile2").is_some() => "FontFile2".to_string(),
+                    Some(fd) => match fd.get(b"FontFile3").and_then(|f| doc.dict(f)) {
+                        Some(stream) => format!("FontFile3/{}", name(&stream, b"Subtype").unwrap_or_default()),
+                        None => "not-embedded".into(),
+                    },
+                    None if subtype == "Type3" => "type3".into(),
+                    None => "no-descriptor".into(),
+                };
+                *found.entry(format!("{kind} {file} enc={encoding} {to_unicode}")).or_insert(0) += 1;
+            }
+        }
+        if depth >= MAX_FORM_DEPTH {
+            return;
+        }
+        if let Some(xobjects) = resources.get(b"XObject").and_then(|x| doc.dict(x)) {
+            for (_, xobject) in xobjects.iter() {
+                if let Some(form) = doc.dict(xobject)
+                    && form.name(b"Subtype") == Some(b"Form")
+                    && let Some(inner) = form.get(b"Resources")
+                {
+                    signatures(doc, inner, depth + 1, seen, found);
+                }
+            }
+        }
+    }
+
     fn font(cos: &mut Cos, base: &str, file: Option<&str>) -> Object {
         let mut font = Dict::new();
         font.set("Type", Object::name("Font"));
