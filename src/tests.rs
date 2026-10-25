@@ -82,6 +82,15 @@ fn a_type3_fonts_glyph_names_are_its_text() {
     assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
 }
 
+/// Round 19 (the corpus sweep, french_diacritics, issue918, issue9655): a
+/// Type 3 glyph named only by its own code (/a72, /C69) is that code in the
+/// standard encoding, as xpdf and pdf.js read it (vendored patch 1).
+#[test]
+fn a_type3_glyph_named_by_its_code_is_that_code() {
+    let mut doc = PdfDocument::new(fixtures::build_type3_numbered()).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
+}
+
 /// Round 19 (the corpus sweep, text-layer group 4): one malformed token in
 /// a ToUnicode CMap's header made hayro drop the whole CMap, and the font
 /// gave no text (vendored patch 2 reads the mappings anyway).

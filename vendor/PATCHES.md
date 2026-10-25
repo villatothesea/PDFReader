@@ -33,7 +33,13 @@ already says, and has a test that fails without it.
 - **Change:** without a ToUnicode entry for the code, the Encoding's name
   for it goes through hayro's own `glyph_name_to_unicode`. Text only;
   drawing is unchanged.
-- **Test:** PDFReader `a_type3_fonts_glyph_names_are_its_text`.
+- **Names that only number their code.** Some generators name Type 3 glyphs
+  `a224` (decimal) or `C41` (hex), a letter or two and the glyph's own code
+  (french_diacritics, issue918, issue9655). Such a name is read as its code
+  in WinAnsiEncoding, as xpdf and pdf.js do. It applies only when the
+  number equals the code, so no other name can trigger it.
+- **Tests:** PDFReader `a_type3_fonts_glyph_names_are_its_text`,
+  `a_type3_glyph_named_by_its_code_is_that_code`.
 
 ### 2. A CMap whose header doesn't parse is read again from its mappings
 

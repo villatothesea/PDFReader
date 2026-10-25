@@ -1,4 +1,4 @@
-// Modified by MimiReader: a Type3 glyph without ToUnicode takes its text from its Encoding name (patch 1). See vendor/PATCHES.md.
+// Modified by MimiReader: a Type3 glyph without ToUnicode takes its text from its Encoding name, or from its code when the name only numbers it (patch 1). See vendor/PATCHES.md.
 use crate::CMapResolverFn;
 use crate::context::Context;
 use crate::device::Device;
@@ -36,6 +36,25 @@ pub(crate) struct Type3<'a> {
     font_bbox: Rect,
     matrix: Affine,
     to_unicode: Option<CMap>,
+}
+
+/// MimiReader patch 1: whether a glyph name only numbers its own code — a
+/// letter or two, then the code in decimal or hexadecimal (`a224`, `C41`,
+/// `g65`), the way some generators name Type3 glyphs. Such a name says
+/// nothing but the code, so the code is read in the standard encoding.
+fn numbers_its_code(name: &str, code: u8) -> bool {
+    let digits = name.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+    let prefix = name.len() - digits.len();
+    if !(1..=2).contains(&prefix) || digits.is_empty() {
+        return false;
+    }
+    digits.parse::<u32>().ok() == Some(u32::from(code))
+        || u32::from_str_radix(digits, 16).ok() == Some(u32::from(code))
+}
+
+/// MimiReader patch 1: a code's character in WinAnsiEncoding.
+fn win_ansi_char(code: u8) -> Option<char> {
+    Encoding::WinAnsi.map_code(code).and_then(glyph_name_to_unicode)
 }
 
 impl<'a> Type3<'a> {
@@ -113,7 +132,9 @@ impl<'a> Type3<'a> {
                     .get(&code)
                     .map(String::as_str)
                     .or_else(|| self.encoding.map_code(code))?;
-                glyph_name_to_unicode(name).map(BfString::Char)
+                glyph_name_to_unicode(name)
+                    .or_else(|| numbers_its_code(name, code).then(|| win_ansi_char(code)).flatten())
+                    .map(BfString::Char)
             })
     }
 
