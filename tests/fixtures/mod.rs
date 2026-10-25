@@ -284,6 +284,28 @@ CMapName currentdict /CMap defineresource pop\nend\nend\n";
     )
 }
 
+/// Round 19 (the corpus sweep, P2): a page whose file draws nothing of its
+/// form or comment — a text field holding "Hello" (rect 20 60 180 90), a
+/// checked check box (rect 20 20 40 40) and a red square comment (rect
+/// 120 10 180 50), none with an appearance (`/AP`). Drawing them is left to
+/// the viewer.
+pub fn build_without_appearances() -> Vec<u8> {
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R /AcroForm 8 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << >> /Annots [5 0 R 6 0 R 7 0 R] >>".to_vec(),
+            stream("", b""),
+            b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Hello) /DA (/Helv 12 Tf 0 g) /Rect [20 60 180 90] /P 3 0 R /F 4 >>".to_vec(),
+            b"<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /V /Yes /Rect [20 20 40 40] /P 3 0 R /F 4 /MK << /BC [0 0 0] >> >>".to_vec(),
+            b"<< /Type /Annot /Subtype /Square /Rect [120 10 180 50] /C [1 0 0] /BS << /W 3 >> /P 3 0 R /F 4 >>".to_vec(),
+            b"<< /Fields [5 0 R 6 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 9 0 R >> >> >>".to_vec(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
+        ],
+        "",
+    )
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),

@@ -278,6 +278,53 @@ mod tests {
         let _ = std::fs::write(out, lines.join("\n"));
     }
 
+    /// Round 19 (the corpus sweep, P2): every page with an annotation or
+    /// field widget that has no normal appearance (`/AP /N`) — what a viewer
+    /// has to draw itself. Links and popups need none and are left out.
+    /// `MIREADER_AP_DIR=<folder of PDFs> MIREADER_AP_OUT=<file> cargo test
+    /// --lib appearance_gaps_report -- --ignored`.
+    #[test]
+    #[ignore = "a report over the corpus, not a check"]
+    fn appearance_gaps_report() {
+        let (Ok(dir), Ok(out)) = (std::env::var("MIREADER_AP_DIR"), std::env::var("MIREADER_AP_OUT")) else { return };
+        let mut lines = Vec::new();
+        let mut paths: Vec<_> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))).collect();
+        paths.sort();
+        for path in paths {
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(doc) = Cos::open(std::sync::Arc::new(bytes)) else { continue };
+            let need = pdfcraft_model::pages(&doc).len() > 0
+                && doc
+                    .root()
+                    .and_then(|r| doc.dict(&Object::Ref(r)))
+                    .and_then(|c| c.get(b"AcroForm").and_then(|a| doc.dict(a)))
+                    .is_some_and(|a| matches!(a.get(b"NeedAppearances").map(|o| doc.resolve(o)).as_deref(), Some(Object::Bool(true))));
+            for (ix, page) in pdfcraft_model::pages(&doc).iter().enumerate() {
+                let Some(annots) = page.dict.get(b"Annots").map(|a| doc.resolve(a)) else { continue };
+                let Some(annots) = annots.as_array() else { continue };
+                let mut gaps: BTreeMap<String, usize> = BTreeMap::new();
+                for annot in annots {
+                    let Some(d) = doc.dict(annot) else { continue };
+                    let subtype = d.name(b"Subtype").map(|n| String::from_utf8_lossy(n).into_owned()).unwrap_or_default();
+                    if matches!(subtype.as_str(), "Link" | "Popup") {
+                        continue;
+                    }
+                    let drawn = d.get(b"AP").and_then(|ap| doc.dict(ap)).is_some_and(|ap| ap.get(b"N").is_some());
+                    if !drawn || (need && subtype == "Widget") {
+                        let ft = d.name(b"FT").map(|n| format!("/{}", String::from_utf8_lossy(n))).unwrap_or_default();
+                        let why = if drawn { "NeedAppearances" } else { "no /AP /N" };
+                        *gaps.entry(format!("{subtype}{ft} ({why})")).or_insert(0) += 1;
+                    }
+                }
+                if !gaps.is_empty() {
+                    let list: Vec<String> = gaps.into_iter().map(|(k, n)| format!("{k} x{n}")).collect();
+                    lines.push(format!("{}\tp{}\t{}", path.file_name().unwrap_or_default().to_string_lossy(), ix + 1, list.join(" ; ")));
+                }
+            }
+        }
+        let _ = std::fs::write(out, lines.join("\n"));
+    }
+
     fn font_mappings_count(bytes: &[u8]) -> usize {
         use skrifa::MetadataProvider as _;
         skrifa::FontRef::new(bytes).map(|f| f.charmap().mappings().count()).unwrap_or(0)
@@ -332,7 +379,6 @@ mod tests {
                 let file = match descriptor {
                     Some(fd) if fd.get(b"FontFile").is_some() => "FontFile".to_string(),
                     Some(fd) if let Some(Object::Stream(s)) = fd.get(b"FontFile2").map(|f| doc.resolve(f)).as_deref() => {
-                        use skrifa::MetadataProvider as _;
                         use skrifa::raw::TableProvider as _;
                         let bytes = s.decoded().unwrap_or_default();
                         let cmaps = match skrifa::FontRef::new(&bytes) {

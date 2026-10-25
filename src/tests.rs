@@ -85,6 +85,32 @@ fn an_embedded_cid_font_of_a_known_collection_has_text() {
     assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
 }
 
+/// Round 19 (the corpus sweep, P2, 65 pages): a field or comment the file
+/// leaves the viewer to draw (no `/AP`) was missing from the page and its
+/// text — a filled-in form showed empty boxes. The pages are drawn from a
+/// copy with those appearances added.
+#[test]
+fn fields_and_comments_without_appearances_are_drawn() {
+    let mut doc = PdfDocument::new(fixtures::build_without_appearances()).unwrap();
+    let text = doc.page_text(0).unwrap().text;
+    assert!(text.contains("Hello"), "the field's value is on the page: {text:?}");
+
+    let page = doc.render_page(0, 2.0).unwrap();
+    assert_eq!((page.width, page.height), (400, 200));
+    let (pixels, width) = fixtures::pixels(&page.png);
+    // PDF y grows upward: a point (x, y) is pixel (2x, 2(100 - y)).
+    let inked = |x0: f64, y0: f64, x1: f64, y1: f64| {
+        let (cols, rows) = ((2.0 * x0) as u32..(2.0 * x1) as u32, (2.0 * (100.0 - y1)) as u32..(2.0 * (100.0 - y0)) as u32);
+        rows.flat_map(|y| cols.clone().map(move |x| (x, y)))
+            .filter(|&(x, y)| pixels[(y * width + x) as usize][..3].iter().any(|c| *c < 160))
+            .count()
+    };
+    assert!(inked(20.0, 60.0, 180.0, 90.0) > 40, "the text field's value is drawn");
+    assert!(inked(22.0, 22.0, 38.0, 38.0) > 20, "the checked box shows its mark");
+    let red = fixtures::pixel(&page.png, 241, 140);
+    assert!(red[0] > 180 && red[1] < 90 && red[2] < 90, "the square comment's red border: {red:?}");
+}
+
 /// The system's Arial, embedded by the tests above (no font is committed).
 /// Missing only off Windows: there the tests skip, and say so.
 fn system_arial() -> Option<Vec<u8>> {
@@ -350,6 +376,29 @@ mod editing {
         doc.edit(EditOp::AddNote { page: 0, at: [40.0, 40.0], contents: "again".into(), color: None }).unwrap();
         doc.save().expect("the copy saves");
         assert_eq!(open(&copy).annotations(0).unwrap().len(), 2);
+    }
+
+    /// Round 19 (the corpus sweep, P2): the appearances drawn for display
+    /// are never saved. The editor works on the file's own bytes, so a save
+    /// after an edit appends only the edit, and the field still has no /AP.
+    #[test]
+    fn drawn_appearances_stay_out_of_the_saved_file() {
+        let original = fixtures::build_without_appearances();
+        let (_dir, path) = file(&original);
+        let mut doc = open(&path);
+        assert!(doc.page_text(0).unwrap().text.contains("Hello"), "drawn for display");
+        doc.edit(EditOp::AddNote { page: 0, at: [100.0, 80.0], contents: "noted".into(), color: None }).unwrap();
+        doc.save().unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        assert!(saved.starts_with(&original), "appended: the original bytes are intact");
+        let reread = pdfcraft_cos::Document::open(std::sync::Arc::new(saved)).unwrap();
+        for field in pdfcraft_forms::fields(&reread) {
+            for widget in &field.widgets {
+                let widget = reread.get(widget.obj);
+                assert!(widget.as_dict().is_some_and(|d| !d.contains(b"AP")), "{} saved without an appearance", field.name);
+            }
+        }
+        assert!(open(&path).page_text(0).unwrap().text.contains("Hello"), "and drawn again on reopening");
     }
 
     /// Round 19 (T1 item 6): the four Info fields, set in one step — one

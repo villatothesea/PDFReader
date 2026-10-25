@@ -551,6 +551,7 @@ dependencies = [
  "mireader-reader-sdk",
  "pdfcraft-annot",
  "pdfcraft-cos",
+ "pdfcraft-forms",
  "pdfcraft-model",
  "pdfcraft-organize",
  "png",
@@ -653,6 +654,18 @@ dependencies = [
  "pdfcraft-cos",
  "skrifa 0.44.0",
  "unicode-bidi",
+]
+
+[[package]]
+name = "pdfcraft-forms"
+version = "0.11.0"
+source = "git+https://github.com/storytold/pdfcraft?rev=3e968c8aa24adfb729c6d45a3c98abf5fed07027#3e968c8aa24adfb729c6d45a3c98abf5fed07027"
+dependencies = [
+ "pdfcraft-content",
+ "pdfcraft-cos",
+ "pdfcraft-fonts",
+ "pdfcraft-model",
+ "thiserror",
 ]
 
 [[package]]

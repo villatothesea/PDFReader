@@ -17,6 +17,8 @@ mod scan;
 mod fallback;
 // Round 19 (the corpus sweep): text from an embedded font's own cmap.
 mod font_text;
+// Round 19 (the corpus sweep, P2): the appearances a file leaves to the viewer.
+mod display;
 // MimiReader round 19 (O12, T1 item 6): Document Properties.
 mod properties;
 // Round 17 (O6): page organising — the reader's own tools.
@@ -124,6 +126,12 @@ impl PdfDocument {
     }
 
     pub fn with_password(bytes: Vec<u8>, password: Option<&str>) -> Result<Self, ReaderError> {
+        // Round 19 (P2): drawn with the appearances the file leaves to the
+        // viewer; the editor keeps the file's own bytes.
+        let bytes = match password {
+            None => display::with_appearances(&bytes).unwrap_or(bytes),
+            Some(_) => bytes,
+        };
         let pdf = Pdf::new_with_password(bytes, password.unwrap_or("")).map_err(|error| match error {
             LoadPdfError::Decryption(_) => {
                 ReaderError::new(ErrorCode::Encrypted, "this PDF is password-protected")
