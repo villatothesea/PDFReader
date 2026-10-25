@@ -106,8 +106,13 @@ fn to_text(job: &mut Job<'_>) -> Result<ToolOutput, ReaderError> {
     }
     let mut notes = Vec::new();
     if !empty.is_empty() {
-        let (word, list) = if empty.len() == 1 { ("page", page_list(&empty)) } else { ("pages", page_list(&empty)) };
-        notes.push(format!("no text on {word} {list} (scans or images)"));
+        // Whole sentences (the app translates them by their template).
+        let list = page_list(&empty);
+        notes.push(if empty.len() == 1 {
+            format!("no text on page {list} (scans or images)")
+        } else {
+            format!("no text on pages {list} (scans or images)")
+        });
     }
     Ok(ToolOutput { mime: "text/plain".into(), text, notes, ..ToolOutput::default() })
 }
@@ -143,7 +148,7 @@ fn to_images(job: &mut Job<'_>) -> Result<ToolOutput, ReaderError> {
     }
     let notes = lowered
         .iter()
-        .map(|(page, at)| format!("page {} is too large for {dpi} DPI: saved at {at} DPI", page + 1))
+        .map(|(page, at)| format!("page {page} is too large for {dpi} DPI: saved at {at} DPI", page = page + 1))
         .collect();
     Ok(ToolOutput { files, notes, ..ToolOutput::default() })
 }
