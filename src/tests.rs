@@ -47,6 +47,17 @@ fn a_pages_text_is_only_what_its_crop_box_shows() {
     assert!(bottom.contains("Bottom half") && !bottom.contains("Top half"), "page 2: {bottom:?}");
 }
 
+/// Round 19 (the corpus sweep, bug1650302 and six more pages): a ToUnicode
+/// given as the name /Identity-H means each code is its own Unicode value.
+/// hayro parsed it as the CID CMap of that name, which maps nothing to
+/// text, so the page had no text layer at all.
+#[test]
+fn an_identity_to_unicode_name_gives_the_codes_as_text() {
+    let mut doc = PdfDocument::new(fixtures::build_identity_to_unicode()).unwrap();
+    let text = doc.page_text(0).unwrap().text;
+    assert_eq!(text.trim(), "Hi");
+}
+
 #[test]
 fn renders_pages_at_the_requested_scale() {
     let mut doc = PdfDocument::new(fixtures::build()).unwrap();

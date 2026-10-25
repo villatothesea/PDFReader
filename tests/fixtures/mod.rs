@@ -168,6 +168,24 @@ pub fn build_cropped() -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, bug1650302): "Hi", <00480069>, in a Type0
+/// font whose ToUnicode is the name /Identity-H rather than a CMap stream —
+/// each two-byte code is its own Unicode value, as pdf.js and mupdf read it.
+pub fn build_identity_to_unicode() -> Vec<u8> {
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+            stream("", b"BT /F1 40 Tf 20 30 Td <00480069> Tj ET\n"),
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /Arial /Encoding /Identity-H /ToUnicode /Identity-H /DescendantFonts [6 0 R] >>".to_vec(),
+            b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Arial /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /DW 600 >>".to_vec(),
+            b"<< /Type /FontDescriptor /FontName /Arial /Flags 32 /FontBBox [-665 -325 2000 1006] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 80 >>".to_vec(),
+        ],
+        "",
+    )
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),
