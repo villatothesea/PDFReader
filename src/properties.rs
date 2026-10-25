@@ -298,7 +298,14 @@ mod tests {
                 };
                 let to_unicode = match dict.get(b"ToUnicode").map(|t| doc.resolve(t)) {
                     Some(t) if t.as_name().is_some() => format!("tounicode=/{}", String::from_utf8_lossy(t.as_name().unwrap_or_default())),
-                    Some(_) => "tounicode=stream".into(),
+                    Some(t) => match &*t {
+                        Object::Stream(s) => match s.decoded() {
+                            Ok(data) if hayro::hayro_interpret::hayro_cmap::CMap::parse(&data, |_| None).is_some() => "tounicode=stream".into(),
+                            Ok(_) => "tounicode=stream(hayro can't parse it)".into(),
+                            Err(_) => "tounicode=stream(undecodable)".into(),
+                        },
+                        _ => "tounicode=other".into(),
+                    },
                     None => "no-tounicode".into(),
                 };
                 let (kind, descriptor) = if subtype == "Type0" {
