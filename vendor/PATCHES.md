@@ -54,6 +54,21 @@ already says, and has a test that fails without it.
   today parses exactly as before.
 - **Test:** PDFReader `a_cmap_with_a_broken_header_still_maps`.
 
+### 3. `Type3Glyph::advance_width` exposes the glyph's width
+
+- **File:** `hayro-interpret/src/font/mod.rs`, a new public method beside
+  `Type3Glyph::as_unicode`.
+- **Why:** an outline glyph tells its advance (`OutlineGlyph::advance_width`)
+  but a Type 3 glyph didn't, so the text layer guessed half an em. Glyphs
+  set wider read as separate letters: "P a r a l l e l" (issue5896,
+  issue3188).
+- **Change:** exposure only. It returns the width hayro already computes
+  for drawing (`Type3::glyph_width`), in the same units as the outline
+  method. Nothing in hayro calls it.
+- **Test:** PDFReader `a_type3_runs_letters_join_and_its_gaps_still_split`,
+  in both directions: a tight run stays one word, and a TJ word gap still
+  gives a space.
+
 ### Considered and not made
 
 - **A ToUnicode stream compressed without a /Filter** (issue19802). The fix

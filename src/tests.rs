@@ -91,6 +91,19 @@ fn a_type3_glyph_named_by_its_code_is_that_code() {
     assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
 }
 
+/// Round 19 (the corpus sweep, issue5896, issue3188): a Type 3 font gives
+/// no glyph widths to the scan, which assumed half an em, so glyphs set
+/// wider read as separate letters ("P a r a l l e l"). The advance is now
+/// measured to the next glyph. Both directions: a tight run stays one word,
+/// a word gap still gives a space.
+#[test]
+fn a_type3_runs_letters_join_and_its_gaps_still_split() {
+    let mut doc = PdfDocument::new(fixtures::build_type3_wide()).unwrap();
+    let text = doc.page_text(0).unwrap().text;
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines, ["Hi", "H i"], "{text:?}");
+}
+
 /// Round 19 (the corpus sweep, text-layer group 4): one malformed token in
 /// a ToUnicode CMap's header made hayro drop the whole CMap, and the font
 /// gave no text (vendored patch 2 reads the mappings anyway).

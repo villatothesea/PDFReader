@@ -22,7 +22,7 @@ use mireader_reader_sdk::PageText;
 /// laid out on 1000 units per em, descender to ascender ≈ −200…800.
 const EM_BOTTOM: f64 = -200.0;
 const EM_TOP: f64 = 800.0;
-/// Advance assumed for glyphs whose font reports none (Type 3).
+/// Advance assumed for glyphs whose font reports none.
 const FALLBACK_ADVANCE: f64 = 500.0;
 /// A first fill this much of the page or larger is the page's ground.
 const GROUND_COVERAGE: f64 = 0.9;
@@ -178,7 +178,12 @@ impl<'a> Device<'a> for Collector {
                         .or_else(|| crate::font_text::from_font_cmap(outline)),
                     outline.advance_width().map(f64::from).filter(|w| *w > 0.0),
                 ),
-                Glyph::Type3(type3) => (type3.as_unicode().map(bf_string), None),
+                // Round 19 (issue5896): the font's own width (vendored patch
+                // 3), not a guessed half em that split words into letters.
+                Glyph::Type3(type3) => (
+                    type3.as_unicode().map(bf_string),
+                    type3.advance_width().map(f64::from).filter(|w| *w > 0.0),
+                ),
             };
             let advance = advance.unwrap_or(FALLBACK_ADVANCE);
             let corners = [

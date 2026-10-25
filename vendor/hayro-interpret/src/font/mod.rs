@@ -1,3 +1,4 @@
+// Modified by MimiReader: Type3Glyph::advance_width exposes the glyph's width (patch 3). See vendor/PATCHES.md.
 //! Interacting with the different kinds of PDF fonts.
 
 use crate::context::Context;
@@ -248,6 +249,14 @@ impl<'a> Type3Glyph<'a> {
     /// Note: Type3 fonts can only provide Unicode via `ToUnicode` cmap.
     pub fn as_unicode(&self) -> Option<BfString> {
         self.font.char_code_to_unicode(self.char_code)
+    }
+
+    /// MimiReader patch 3: the advance width for this glyph, from the font's
+    /// Widths, in the same units as [`OutlineGlyph::advance_width`].
+    pub fn advance_width(&self) -> Option<f32> {
+        u8::try_from(self.char_code)
+            .ok()
+            .map(|code| self.font.glyph_width(code))
     }
 }
 

@@ -213,18 +213,25 @@ pub fn build_embedded_identity(font: &[u8], glyphs: &[u32]) -> Vec<u8> {
 /// 500 units wide, the advance the scan assumes for Type 3 (it reads no
 /// widths yet), so the test is about the text, not its spacing.
 pub fn build_type3_named() -> Vec<u8> {
-    build_type3(b"<0102> Tj", "[1 /H /i]", "/H 6 0 R /i 6 0 R", 1, 2)
+    build_type3(b"<0102> Tj", "[1 /H /i]", "/H 6 0 R /i 6 0 R", 1, 2, 500)
 }
 
 /// Round 19 (the corpus sweep, french_diacritics, issue918, issue9655):
 /// "Hi" in a Type 3 font whose glyph names only number their own codes —
 /// /a72 (decimal) and /C69 (hexadecimal) for codes 72 and 0x69.
 pub fn build_type3_numbered() -> Vec<u8> {
-    build_type3(b"<4869> Tj", "[72 /a72 105 /C69]", "/a72 6 0 R /C69 6 0 R", 72, 105)
+    build_type3(b"<4869> Tj", "[72 /a72 105 /C69]", "/a72 6 0 R /C69 6 0 R", 72, 105, 500)
 }
 
-fn build_type3(show: &[u8], differences: &str, procs: &str, first: u32, last: u32) -> Vec<u8> {
-    let widths = vec!["500"; (last - first + 1) as usize].join(" ");
+/// Round 19 (the corpus sweep, issue5896 "P a r a l l e l"): "Hi" twice in
+/// a Type 3 font whose glyphs are 750 units wide — set tight, then with a
+/// word gap pushed in by TJ.
+pub fn build_type3_wide() -> Vec<u8> {
+    build_type3(b"<0102> Tj 0 -30 Td [<01> -600 <02>] TJ", "[1 /H /i]", "/H 6 0 R /i 6 0 R", 1, 2, 750)
+}
+
+fn build_type3(show: &[u8], differences: &str, procs: &str, first: u32, last: u32, width: u32) -> Vec<u8> {
+    let widths = vec![width.to_string(); (last - first + 1) as usize].join(" ");
     write_pdf(
         &[
             b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
@@ -232,7 +239,7 @@ fn build_type3(show: &[u8], differences: &str, procs: &str, first: u32, last: u3
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
             stream("", &[b"BT /F1 40 Tf 20 30 Td ".as_slice(), show, b" ET\n"].concat()),
             format!("<< /Type /Font /Subtype /Type3 /FontBBox [0 0 500 700] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << {procs} >> /Encoding << /Type /Encoding /Differences {differences} >> /FirstChar {first} /LastChar {last} /Widths [{widths}] >>").into_bytes(),
-            stream("", b"500 0 0 0 450 700 d1 50 0 400 700 re f\n"),
+            stream("", format!("{width} 0 0 0 {} 700 d1 50 0 {} 700 re f\n", width - 50, width - 100).as_bytes()),
         ],
         "",
     )
