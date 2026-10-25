@@ -67,6 +67,7 @@ impl Reader for PdfReader {
         // Item 19: editable when pdfcraft can write the file back.
         doc.editor = edit::Editor::open(path, Arc::new(bytes), password);
         doc.password = password.map(str::to_owned);
+        doc.info.page_labels = page_labels(doc.editor.as_ref(), doc.info.pages.len());
         Ok(Box::new(doc))
     }
 
@@ -164,6 +165,7 @@ impl PdfDocument {
         self.pdf = fresh.pdf;
         self.info.pages = fresh.info.pages;
         self.info.outline = fresh.info.outline;
+        self.info.page_labels = page_labels(self.editor.as_ref(), self.info.pages.len());
         self.scans.clear();
         Ok(())
     }
@@ -192,6 +194,16 @@ impl PdfDocument {
         }
         Ok(&self.scans.back().expect("just pushed").1)
     }
+}
+
+/// Round 19 (O12, T1 item 3): the document's own page numbers — `i`, `ii`,
+/// `1` … — read through the editor's copy of the file (pdfcraft parses it
+/// there anyway). Empty when they are just 1 … n, or unreadable: the host
+/// then numbers pages itself.
+fn page_labels(editor: Option<&edit::Editor>, count: usize) -> Vec<String> {
+    let Some(labels) = editor.and_then(edit::Editor::page_labels) else { return Vec::new() };
+    let plain = labels.iter().enumerate().all(|(ix, label)| *label == (ix + 1).to_string());
+    if plain || labels.len() != count { Vec::new() } else { labels }
 }
 
 /// The scale actually used for a page of `width`×`height` points.

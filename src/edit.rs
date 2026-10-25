@@ -236,6 +236,12 @@ impl Editor {
         EditInfo { kinds: self.kinds.clone(), guard: self.guard.clone(), state: self.state() }
     }
 
+    /// Round 19 (O12, T1 item 3): the document's own page numbers (`/PageLabels`),
+    /// one per page — `None` when its label tree can't be read.
+    pub(crate) fn page_labels(&self) -> Option<Vec<String>> {
+        pdfcraft_organize::page_labels(&self.current.doc).ok()
+    }
+
     /// The document as it stands, as PDF bytes (what the renderer reads).
     pub(crate) fn bytes(&self) -> Result<Vec<u8>, ReaderError> {
         if !self.current.doc.is_modified() {
