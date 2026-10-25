@@ -59,6 +59,11 @@ pub(crate) struct Editor {
     kinds: Vec<EditKind>,
     guard: Option<EditGuard>,
     names: u64,
+    /// The file it was opened from, and whether pdfcraft had to rebuild its
+    /// structure to read it: then no save may go back over that file (the
+    /// writer would rewrite it whole, and the original bytes would be gone).
+    original: PathBuf,
+    rebuilt: bool,
 }
 
 fn io(error: impl std::fmt::Display) -> ReaderError {
@@ -210,7 +215,10 @@ impl Editor {
                 message: "This PDF is password-protected; comments are saved with the same protection.".into(),
             });
         }
+        let rebuilt = doc.reconstructed();
         Some(Editor {
+            original: path.to_path_buf(),
+            rebuilt,
             path: path.to_path_buf(),
             current: Version { doc, id: 0 },
             undo: Vec::new(),
@@ -240,7 +248,12 @@ impl Editor {
     }
 
     pub(crate) fn info(&self) -> EditInfo {
-        EditInfo { kinds: self.kinds.clone(), guard: self.guard.clone(), state: self.state() }
+        EditInfo { kinds: self.kinds.clone(), guard: self.guard.clone(), state: self.state(), rebuilt: self.over_original() }
+    }
+
+    /// A save now would write over the rebuilt original.
+    fn over_original(&self) -> bool {
+        self.rebuilt && same_file(&self.path, &self.original)
     }
 
     /// Round 19 (O12, T1 item 3): the document's own page numbers (`/PageLabels`),
@@ -503,6 +516,10 @@ impl Editor {
     /// when encrypting needs one), into a temporary file beside it, then
     /// swapped in. Refuses (`Conflict`) when the file changed on disk.
     pub(crate) fn save(&mut self) -> Result<(), ReaderError> {
+        // Round 19 (the corpus sweep): never rewrite a rebuilt original.
+        if self.over_original() {
+            return Err(ReaderError::unsupported(REBUILT));
+        }
         if self.changed_on_disk() {
             return Err(ReaderError::new(
                 ErrorCode::Conflict,
@@ -514,6 +531,9 @@ impl Editor {
     }
 
     pub(crate) fn save_as(&mut self, path: &Path) -> Result<(), ReaderError> {
+        if self.rebuilt && same_file(path, &self.original) {
+            return Err(ReaderError::unsupported(REBUILT));
+        }
         self.write_to(path)?;
         self.path = path.to_path_buf();
         Ok(())
@@ -571,5 +591,16 @@ fn set_info(doc: &mut Cos, fields: [(&str, String); 4]) -> Result<(), ReaderErro
             doc.trailer_mut().set("Info", Object::Ref(info));
             Ok(())
         }
+    }
+}
+
+/// Why a rebuilt file isn't saved over (the app words it for the reader).
+const REBUILT: &str = "this file's structure had to be rebuilt, so it can't be updated in place";
+
+/// Whether two paths name the same file (either may not exist yet).
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
     }
 }

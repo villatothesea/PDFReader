@@ -129,6 +129,27 @@ pub fn build_linked() -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, issue1350): two pages that draw the same
+/// content — "Top half" at y 150, "Bottom half" at y 50 — each showing a
+/// different region of it through its CropBox (top, then bottom).
+pub fn build_cropped() -> Vec<u8> {
+    let page = |crop: &str| {
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /CropBox [{crop}] /Contents 5 0 R /Resources << /Font << /F1 6 0 R >> >> >>")
+            .into_bytes()
+    };
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+            page("0 100 300 200"),
+            page("0 0 300 100"),
+            stream("", b"BT /F1 20 Tf 20 150 Td (Top half) Tj 0 -100 Td (Bottom half) Tj ET\n"),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ],
+        "",
+    )
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),

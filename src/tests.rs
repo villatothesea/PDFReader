@@ -16,6 +16,19 @@ fn reads_page_sizes_and_metadata() {
     assert_eq!(info.author.as_deref(), Some("Pat Printer"));
 }
 
+/// Round 19 (the corpus sweep, issue1350): a page's text is what its crop
+/// box shows. Two pages drawing the same content through different crop
+/// boxes each give only their own half — the text layer gave every page
+/// the whole content, so search found matches on pages that don't show them.
+#[test]
+fn a_pages_text_is_only_what_its_crop_box_shows() {
+    let mut doc = PdfDocument::new(fixtures::build_cropped()).unwrap();
+    let top = doc.page_text(0).unwrap().text;
+    let bottom = doc.page_text(1).unwrap().text;
+    assert!(top.contains("Top half") && !top.contains("Bottom half"), "page 1: {top:?}");
+    assert!(bottom.contains("Bottom half") && !bottom.contains("Top half"), "page 2: {bottom:?}");
+}
+
 #[test]
 fn renders_pages_at_the_requested_scale() {
     let mut doc = PdfDocument::new(fixtures::build()).unwrap();
@@ -200,6 +213,36 @@ mod editing {
         let x1 = boxes.iter().map(|b| b[2]).fold(f32::MIN, f32::max);
         let y1 = boxes.iter().map(|b| b[3]).fold(f32::MIN, f32::max);
         [x0, y0, x1, y0, x0, y1, x1, y1]
+    }
+
+    /// Round 19 (the corpus sweep): a file whose structure had to be rebuilt
+    /// is never saved over — the writer would rewrite it whole and the
+    /// original bytes would be gone. The reader says so, refuses Save, takes
+    /// Save As to a new file (the original untouched), and the copy saves.
+    #[test]
+    fn a_rebuilt_file_is_never_saved_over() {
+        let mut original = fixtures::build_rich();
+        // Point startxref at nothing: pdfcraft has to rebuild the xref.
+        let at = original.windows(9).rposition(|w| w == b"startxref").expect("startxref");
+        let tail = original[at..].to_vec();
+        let digits = tail.iter().position(u8::is_ascii_digit).expect("offset");
+        let end = digits + tail[digits..].iter().position(|b| !b.is_ascii_digit()).unwrap_or(tail.len() - digits);
+        original.splice(at + digits..at + end, b"999999".iter().copied());
+        let (_dir, path) = file(&original);
+        let mut doc = open(&path);
+        let edit = doc.info().edit.expect("editable");
+        assert!(edit.rebuilt, "the reader says the file was rebuilt");
+        doc.edit(EditOp::AddNote { page: 0, at: [20.0, 20.0], contents: "kept apart".into(), color: None }).unwrap();
+        assert!(doc.save().is_err(), "no save over a rebuilt original");
+        assert_eq!(std::fs::read(&path).unwrap(), original, "the original is untouched");
+
+        let copy = path.with_file_name("copy (edited).pdf");
+        doc.save_as(&copy).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original, "still untouched after Save As");
+        assert!(!doc.info().edit.expect("editable").rebuilt, "the copy is ours to save");
+        doc.edit(EditOp::AddNote { page: 0, at: [40.0, 40.0], contents: "again".into(), color: None }).unwrap();
+        doc.save().expect("the copy saves");
+        assert_eq!(open(&copy).annotations(0).unwrap().len(), 2);
     }
 
     /// Round 19 (T1 item 6): the four Info fields, set in one step — one

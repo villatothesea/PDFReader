@@ -198,6 +198,15 @@ impl<'a> Device<'a> for Collector {
             else {
                 continue;
             };
+            // Round 19 (the corpus sweep, issue1350): the text is what the
+            // page shows. A glyph whose centre lies outside the page's box
+            // (its crop box, in this space) isn't on the page — pages that
+            // draw the same content through different crop boxes each gave
+            // the whole of it, so search found matches on pages that don't
+            // show them.
+            if !self.page.contains(rect.center()) {
+                continue;
+            }
             let origin = transform * Point::new(0.0, 0.0);
             let along = transform * Point::new(1000.0, 0.0) - origin;
             let up = transform * Point::new(0.0, 1000.0) - origin;
