@@ -82,6 +82,15 @@ fn a_type3_fonts_glyph_names_are_its_text() {
     assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
 }
 
+/// Round 19 (the corpus sweep, text-layer group 4): one malformed token in
+/// a ToUnicode CMap's header made hayro drop the whole CMap, and the font
+/// gave no text (vendored patch 2 reads the mappings anyway).
+#[test]
+fn a_cmap_with_a_broken_header_still_maps() {
+    let mut doc = PdfDocument::new(fixtures::build_broken_cmap_header()).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
+}
+
 #[test]
 fn renders_pages_at_the_requested_scale() {
     let mut doc = PdfDocument::new(fixtures::build()).unwrap();

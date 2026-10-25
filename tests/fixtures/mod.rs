@@ -226,6 +226,30 @@ pub fn build_type3_named() -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, text-layer group 4, issue7492): "Hi" in a
+/// Type0 font whose ToUnicode CMap is sound except for its header — a
+/// `/CMapName` with spaces and commas in it, as a font path became one.
+pub fn build_broken_cmap_header() -> Vec<u8> {
+    let cmap = b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n\
+/CMapName /-usr-share-fonts-Panton Family-Fontfabric - Panton.otf,000-UTF16 def\n\
+/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n\
+2 beginbfchar\n<0001> <0048>\n<0002> <0069>\nendbfchar\nendcmap\n\
+CMapName currentdict /CMap defineresource pop\nend\nend\n";
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+            stream("", b"BT /F1 40 Tf 20 30 Td <00010002> Tj ET\n"),
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /Arial /Encoding /Identity-H /ToUnicode 8 0 R /DescendantFonts [6 0 R] >>".to_vec(),
+            b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Arial /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /DW 600 >>".to_vec(),
+            b"<< /Type /FontDescriptor /FontName /Arial /Flags 32 /FontBBox [-665 -325 2000 1006] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 80 >>".to_vec(),
+            stream("", cmap),
+        ],
+        "",
+    )
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),

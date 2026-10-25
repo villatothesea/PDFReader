@@ -35,6 +35,19 @@ already says, and has a test that fails without it.
   drawing is unchanged.
 - **Test:** PDFReader `a_type3_fonts_glyph_names_are_its_text`.
 
+### 2. A CMap whose header doesn't parse is read again from its mappings
+
+- **File:** `hayro-cmap/src/parse.rs`, `parse_inner` (the old body is now
+  `parse_strict`).
+- **Why:** one malformed token anywhere in a CMap made the whole CMap fail.
+  A `/CMapName` with spaces in it (issue7492) and a broken string in the
+  header (issue11651) each cost a font all of its text.
+- **Change:** only when the strict parse fails, parse again from the line
+  holding `begincodespacerange`. The mappings survive; the header's
+  metadata (name, CIDSystemInfo, WMode) is dropped. A CMap that parses
+  today parses exactly as before.
+- **Test:** PDFReader `a_cmap_with_a_broken_header_still_maps`.
+
 ### Considered and not made
 
 - **A ToUnicode stream compressed without a /Filter** (issue19802). The fix

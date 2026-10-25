@@ -1,3 +1,4 @@
+// Modified by MimiReader: a CMap whose header doesn't parse is read again from its mappings (patch 2). See vendor/PATCHES.md.
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -16,6 +17,30 @@ struct Context<F> {
 }
 
 pub(crate) fn parse_inner<'a>(
+    data: &[u8],
+    get_cmap: impl Fn(CMapName<'_>) -> Option<&'a [u8]> + Clone + 'a,
+    depth: u32,
+) -> Option<CMap> {
+    // MimiReader patch 2: one malformed token in a CMap's header (a
+    // `/CMapName` with spaces in it, a broken string in its CIDSystemInfo)
+    // made the whole CMap fail, and with it a font's text. When the strict
+    // parse fails, parse again from the line holding `begincodespacerange`:
+    // the mappings survive, the header's metadata is dropped. A CMap that
+    // parses today is unaffected.
+    parse_strict(data, get_cmap.clone(), depth).or_else(|| {
+        const MARK: &[u8] = b"begincodespacerange";
+        let mark = data.windows(MARK.len()).position(|w| w == MARK)?;
+        let line = data
+            .get(..mark)?
+            .iter()
+            .rposition(|b| matches!(b, b'\n' | b'\r'))
+            .map_or(0, |i| i + 1);
+        (line > 0).then_some(())?;
+        parse_strict(data.get(line..)?, get_cmap, depth)
+    })
+}
+
+fn parse_strict<'a>(
     data: &[u8],
     get_cmap: impl Fn(CMapName<'_>) -> Option<&'a [u8]> + Clone + 'a,
     depth: u32,
