@@ -15,6 +15,8 @@ mod recolor;
 mod scan;
 // Round 19 (the corpus sweep): a system font for non-embedded CJK text.
 mod fallback;
+// Round 19 (the corpus sweep): text from an embedded font's own cmap.
+mod font_text;
 // MimiReader round 19 (O12, T1 item 6): Document Properties.
 mod properties;
 // Round 17 (O6): page organising — the reader's own tools.

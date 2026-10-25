@@ -172,7 +172,10 @@ impl<'a> Device<'a> for Collector {
             let transform = props.transform * glyph.transform();
             let (text, advance) = match &**glyph {
                 Glyph::Outline(outline) => (
-                    outline.as_unicode().map(bf_string),
+                    outline
+                        .as_unicode()
+                        .map(bf_string)
+                        .or_else(|| crate::font_text::from_font_cmap(outline)),
                     outline.advance_width().map(f64::from).filter(|w| *w > 0.0),
                 ),
                 Glyph::Type3(type3) => (type3.as_unicode().map(bf_string), None),

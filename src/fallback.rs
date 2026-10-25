@@ -17,6 +17,28 @@ use hayro::hayro_interpret::hayro_cmap::{CMapName, CidFamily};
 /// A font file read once is kept; one that isn't there is remembered too.
 static LOADED: OnceLock<Mutex<HashMap<&'static str, Option<FontData>>>> = OnceLock::new();
 
+/// Every font this resolver has handed hayro (a standard font or a system
+/// one), by the address of its bytes: none of them is the file's own font.
+/// hayro's standard fonts are static and the system fonts are kept, so the
+/// set stays as small as those two lists.
+static STAND_INS: OnceLock<Mutex<std::collections::HashSet<usize>>> = OnceLock::new();
+
+fn remember_stand_in(data: &FontData) {
+    let bytes: &[u8] = (**data).as_ref();
+    if let Ok(mut set) = STAND_INS.get_or_init(Default::default).lock() {
+        set.insert(bytes.as_ptr() as usize);
+    }
+}
+
+/// Whether `bytes` are a stand-in this resolver supplied, not a font the
+/// file embeds.
+pub(crate) fn is_stand_in(bytes: &[u8]) -> bool {
+    STAND_INS
+        .get()
+        .and_then(|set| set.lock().ok().map(|set| set.contains(&(bytes.as_ptr() as usize))))
+        .unwrap_or(false)
+}
+
 /// Larger than any system CJK font; a file past this isn't read.
 const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -101,13 +123,19 @@ pub(crate) fn settings() -> InterpreterSettings {
     let standard_cmaps = default.cmap_resolver.clone();
     InterpreterSettings {
         font_resolver: Arc::new(move |query| {
-            if let FontQuery::Fallback(fallback) = query
-                && let Some(collection) = &fallback.character_collection
-                && let Some(found) = system_font(candidates(&collection.family))
-            {
-                return Some(found);
+            let found = match query {
+                FontQuery::Fallback(fallback)
+                    if let Some(collection) = &fallback.character_collection
+                        && let Some(found) = system_font(candidates(&collection.family)) =>
+                {
+                    Some(found)
+                }
+                _ => standard(query),
+            };
+            if let Some((data, _)) = &found {
+                remember_stand_in(data);
             }
-            standard(query)
+            found
         }),
         cmap_resolver: Arc::new(move |name| match name {
             CMapName::IdentityH => Some(identity_cmap(false)),

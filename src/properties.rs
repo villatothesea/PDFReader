@@ -278,6 +278,11 @@ mod tests {
         let _ = std::fs::write(out, lines.join("\n"));
     }
 
+    fn font_mappings_count(bytes: &[u8]) -> usize {
+        use skrifa::MetadataProvider as _;
+        skrifa::FontRef::new(bytes).map(|f| f.charmap().mappings().count()).unwrap_or(0)
+    }
+
     fn signatures(doc: &Cos, resources: &Object, depth: usize, seen: &mut HashSet<(u32, u16)>, found: &mut BTreeMap<String, usize>) {
         if let Some(r) = resources.as_ref()
             && !seen.insert((r.num, r.generation))
@@ -326,7 +331,24 @@ mod tests {
                 };
                 let file = match descriptor {
                     Some(fd) if fd.get(b"FontFile").is_some() => "FontFile".to_string(),
-                    Some(fd) if fd.get(b"FontFile2").is_some() => "FontFile2".to_string(),
+                    Some(fd) if let Some(Object::Stream(s)) = fd.get(b"FontFile2").map(|f| doc.resolve(f)).as_deref() => {
+                        use skrifa::MetadataProvider as _;
+                        use skrifa::raw::TableProvider as _;
+                        let bytes = s.decoded().unwrap_or_default();
+                        let cmaps = match skrifa::FontRef::new(&bytes) {
+                            Ok(font) => match font.cmap() {
+                                Ok(cmap) => cmap
+                                    .encoding_records()
+                                    .iter()
+                                    .map(|r| format!("{}/{}", r.platform_id() as u16, r.encoding_id()))
+                                    .collect::<Vec<_>>()
+                                    .join(","),
+                                Err(_) => "no-cmap".into(),
+                            },
+                            Err(_) => "unreadable".into(),
+                        };
+                        format!("FontFile2[cmap {cmaps}; {} mapped]", font_mappings_count(&bytes))
+                    }
                     Some(fd) => match fd.get(b"FontFile3").and_then(|f| doc.dict(f)) {
                         Some(stream) => format!("FontFile3/{}", name(&stream, b"Subtype").unwrap_or_default()),
                         None => "not-embedded".into(),

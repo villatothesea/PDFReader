@@ -58,6 +58,21 @@ fn an_identity_to_unicode_name_gives_the_codes_as_text() {
     assert_eq!(text.trim(), "Hi");
 }
 
+/// Round 19 (the corpus sweep, text-layer group 5): a Type0 font with an
+/// Identity ordering and no ToUnicode gave no text at all, though the font
+/// it embeds says in its cmap which character each glyph is. The test
+/// embeds the system's Arial (no font is committed) and skips without it.
+#[test]
+fn an_embedded_fonts_cmap_names_glyphs_that_have_no_to_unicode() {
+    use skrifa::MetadataProvider as _;
+    let windows = std::env::var_os("WINDIR").map(std::path::PathBuf::from).unwrap_or_else(|| r"C:\Windows".into());
+    let Ok(font) = std::fs::read(windows.join(r"Fonts\arial.ttf")) else { return };
+    let charmap = skrifa::FontRef::new(&font).unwrap().charmap();
+    let glyphs: Vec<u32> = "Hi".chars().map(|c| charmap.map(c).unwrap().to_u32()).collect();
+    let mut doc = PdfDocument::new(fixtures::build_embedded_identity(&font, &glyphs)).unwrap();
+    assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
+}
+
 #[test]
 fn renders_pages_at_the_requested_scale() {
     let mut doc = PdfDocument::new(fixtures::build()).unwrap();

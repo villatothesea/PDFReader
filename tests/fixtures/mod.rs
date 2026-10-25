@@ -186,6 +186,27 @@ pub fn build_identity_to_unicode() -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, text-layer group 5): `glyphs` (glyph ids of
+/// `font`, a TrueType file) drawn through a Type0 font that embeds it, with
+/// an Identity ordering and no ToUnicode — only the font's own cmap says
+/// what they are.
+pub fn build_embedded_identity(font: &[u8], glyphs: &[u32]) -> Vec<u8> {
+    let codes: String = glyphs.iter().map(|g| format!("{g:04X}")).collect();
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+            stream("", format!("BT /F1 40 Tf 20 30 Td <{codes}> Tj ET\n").as_bytes()),
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+Arial /Encoding /Identity-H /DescendantFonts [6 0 R] >>".to_vec(),
+            b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /ABCDEF+Arial /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /CIDToGIDMap /Identity /FontDescriptor 7 0 R /DW 600 >>".to_vec(),
+            b"<< /Type /FontDescriptor /FontName /ABCDEF+Arial /Flags 32 /FontBBox [-665 -325 2000 1006] /ItalicAngle 0 /Ascent 905 /Descent -212 /CapHeight 716 /StemV 80 /FontFile2 8 0 R >>".to_vec(),
+            stream(&format!("/Length1 {}", font.len()), font),
+        ],
+        "",
+    )
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),

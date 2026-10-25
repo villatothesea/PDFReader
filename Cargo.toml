@@ -15,6 +15,8 @@ path = "src/main.rs"
 # E:\Villa\VibeCoding\MimiReader\{MimiReader,PDFReader}.
 mireader-reader-sdk = { path = "../MimiReader/crates/reader-sdk" }
 hayro = "0.8"
+# hayro's own version (no second copy): an embedded font's cmap, for text.
+skrifa = "0.46"
 # Item 19 (D53): editing in place — pdfcraft's object layer, comments and
 # outline, pinned. None of these crates pulls in a renderer of its own.
 pdfcraft-cos = { git = "https://github.com/storytold/pdfcraft", rev = "3e968c8aa24adfb729c6d45a3c98abf5fed07027" }
