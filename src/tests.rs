@@ -487,3 +487,34 @@ fn print_raster_parts() {
     let per = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / count as f64;
     eprintln!("{count} pages at 300 dpi: raster {:.1} ms/page, PNG encode {:.1} ms/page, {:.0} KB/page", per(raster), per(encode), bytes as f64 / 1e3 / count as f64);
 }
+
+/// Round 19 (T1 item 5): what a page thumbnail costs the reader — the
+/// whole `render_page` (raster and PNG) at the app's three thumbnail widths
+/// on a 1.5× screen, the first 40 pages, and the decoded size the app holds:
+/// `MIREADER_TEST_PDF=<a.pdf> cargo test --release thumbnail_cost -- --ignored --nocapture`.
+#[test]
+#[ignore = "needs a sample PDF"]
+fn thumbnail_cost() {
+    let path = std::env::var("MIREADER_TEST_PDF").expect("MIREADER_TEST_PDF");
+    let mut doc = PdfDocument::new(std::fs::read(&path).unwrap()).unwrap();
+    let sizes = doc.info().pages.clone();
+    let count = sizes.len().min(40);
+    for width in [96.0f32, 140.0, 200.0] {
+        let (mut total, mut pixels, mut worst) = (std::time::Duration::ZERO, 0usize, std::time::Duration::ZERO);
+        for page in 0..count {
+            let scale = width * 1.5 / sizes[page].width;
+            let started = std::time::Instant::now();
+            let rendered = doc.render_page(page as u32, scale).unwrap();
+            let took = started.elapsed();
+            total += took;
+            worst = worst.max(took);
+            pixels += (rendered.width * rendered.height) as usize;
+        }
+        eprintln!(
+            "{width} px thumbnails, {count} pages: {:.1} ms each (worst {:.1}), {:.0} KB decoded each",
+            total.as_secs_f64() * 1000.0 / count as f64,
+            worst.as_secs_f64() * 1000.0,
+            pixels as f64 * 4.0 / 1e3 / count as f64
+        );
+    }
+}
