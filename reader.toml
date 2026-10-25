@@ -14,6 +14,7 @@ license = "MIT (MiReader); hayro: MIT/Apache-2.0; pdfcraft: MIT/Apache-2.0"
 [[actions]]
 id = "pdf-to-markdown"
 title = "Convert to Markdown"
+icon = "markdown"
 extensions = ["pdf"]
 output = "md"
 
@@ -23,6 +24,7 @@ output = "md"
 [[actions]]
 id = "extract-pages"
 title = "Extract pages…"
+icon = "file-send"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -35,6 +37,7 @@ help = "For example 1-3, 7, 10-"
 [[actions]]
 id = "reorder-pages"
 title = "Reorder pages…"
+icon = "sort-vertical"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -47,6 +50,7 @@ help = "For example 3, 1-2, 5 — pages left out follow in their order"
 [[actions]]
 id = "split-every"
 title = "Split every N pages…"
+icon = "scissors"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -59,6 +63,7 @@ min = 1
 [[actions]]
 id = "split-at"
 title = "Split before pages…"
+icon = "page-split-before"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -71,6 +76,7 @@ help = "For example 5, 12"
 [[actions]]
 id = "merge"
 title = "Merge with other PDFs…"
+icon = "documents"
 extensions = ["pdf"]
 inputs = "many"
 files = "pdf"
