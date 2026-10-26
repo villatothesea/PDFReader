@@ -306,6 +306,30 @@ pub fn build_without_appearances() -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, resetform_parent): a push button field of
+/// two widgets. One has no appearance: a caption "Reset" (`/MK /CA`), a
+/// black border and a light grey background (`/MK /BC`, `/BG`), over rect
+/// 40 30 160 70. The other has a look of its own, a black box over
+/// 170 30 190 70.
+pub fn build_push_button_without_appearance() -> Vec<u8> {
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << >> /Annots [5 0 R 8 0 R] >>".to_vec(),
+            stream("", b""),
+            b"<< /Type /Annot /Subtype /Widget /Parent 10 0 R /P 3 0 R /Rect [40 30 160 70] /F 4 /DA (/Helv 12 Tf 0 g) /MK << /CA (Reset) /BC [0 0 0] /BG [0.9 0.9 0.9] >> >>".to_vec(),
+            b"<< /Fields [10 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 7 0 R >> >> >>".to_vec(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
+            b"<< /Type /Annot /Subtype /Widget /Parent 10 0 R /P 3 0 R /Rect [170 30 190 70] /F 4 /AP << /N 9 0 R >> >>".to_vec(),
+            stream("/Type /XObject /Subtype /Form /BBox [0 0 20 40]", b"0 g 0 0 20 40 re f
+"),
+            b"<< /FT /Btn /Ff 65536 /T (reset) /Kids [5 0 R 8 0 R] /A << /S /ResetForm >> >>".to_vec(),
+        ],
+        "",
+    )
+}
+
 /// Round 19 (the corpus sweep, text_field_own_canvas_calc): a form that
 /// sets /NeedAppearances, with a text field that has no value (/V) but an
 /// appearance of its own — a black box over rect 20 20 180 80, as a

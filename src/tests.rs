@@ -111,6 +111,25 @@ fn fields_and_comments_without_appearances_are_drawn() {
     assert!(red[0] > 180 && red[1] < 90 && red[2] < 90, "the square comment's red border: {red:?}");
 }
 
+/// Round 19 (the corpus sweep, resetform_parent): a push button without an
+/// appearance is drawn with its caption and colours, as every form's Reset
+/// or Submit button left to the viewer; a button with its own look keeps it.
+#[test]
+fn a_push_button_without_an_appearance_shows_its_caption() {
+    let mut doc = PdfDocument::new(fixtures::build_push_button_without_appearance()).unwrap();
+    let text = doc.page_text(0).unwrap().text;
+    assert!(text.contains("Reset"), "the caption is on the page: {text:?}");
+    let page = doc.render_page(0, 2.0).unwrap();
+    // PDF y grows upward: a point (x, y) is pixel (2x, 2(100 - y)).
+    let at = |x: u32, y: u32| fixtures::pixel(&page.png, 2 * x, 2 * (100 - y));
+    let grey = at(45, 35);
+    assert!(grey[..3].iter().all(|c| (200..=240).contains(c)), "its background: {grey:?}");
+    let (pixels, width) = fixtures::pixels(&page.png);
+    let dark = (2 * 60..2 * 140).flat_map(|x| (2 * 40..2 * 60).map(move |y| (x, y))).filter(|&(x, y)| pixels[(y * width + x) as usize][..3].iter().all(|c| *c < 100)).count();
+    assert!(dark > 40, "its caption is drawn: {dark} dark pixels");
+    assert!(at(180, 50)[..3].iter().all(|c| *c < 60), "the other button keeps its own black box: {:?}", at(180, 50));
+}
+
 /// Round 19 (the corpus sweep, text_field_own_canvas_calc p3): under
 /// /NeedAppearances a field with no value keeps the appearance it has —
 /// redrawing it from its empty value wiped a calculated field's result.

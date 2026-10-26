@@ -8,8 +8,8 @@
 //! as pdfcraft draws them when one is typed or placed: text and choice
 //! fields from their values (under /NeedAppearances a field with a value is
 //! redrawn even if it has a look; one without keeps the look it has),
-//! check boxes and radio buttons as a drawn mark,
-//! comments from their own dictionary. The copy is the file's bytes plus an
+//! check boxes and radio buttons as a drawn mark, push buttons with their
+//! caption (`/MK /CA`) and colours, comments from their own dictionary. The copy is the file's bytes plus an
 //! incremental update, made in memory; the file on disk and the editor
 //! (saves, undo) keep the original.
 
@@ -56,6 +56,26 @@ pub(crate) fn with_appearances(bytes: &[u8]) -> Option<Vec<u8>> {
                 apd.set(b"N".to_vec(), Object::Ref(ap));
                 // Fails only when the widget isn't a dictionary; it then keeps its look.
                 target.update_dict(widget.obj, |d| d.set(b"AP".to_vec(), Object::Dict(apd))).ok();
+            }
+            continue;
+        }
+        if field.kind == FieldKind::PushButton {
+            // pdfcraft draws a button's caption, colours and icon only for
+            // the whole field; a widget that had a look of its own gets it
+            // back (resetform_parent's Reset buttons showed nothing).
+            let own: Vec<_> = field
+                .widgets
+                .iter()
+                .filter_map(|w| doc.get(w.obj).as_dict().filter(|d| drawn(&doc, d)).and_then(|d| d.get(b"AP").cloned()).map(|ap| (w.obj, ap)))
+                .collect();
+            if own.len() == field.widgets.len() {
+                continue;
+            }
+            let target = copy.get_or_insert_with(|| doc.clone());
+            if pdfcraft_forms::redraw_field(target, &field.name).is_ok() {
+                for (obj, ap) in own {
+                    target.update_dict(obj, |d| d.set(b"AP".to_vec(), ap)).ok();
+                }
             }
             continue;
         }
