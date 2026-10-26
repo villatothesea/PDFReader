@@ -1,6 +1,6 @@
 # PDFReader
 
-The PDF reader plugin for [MimiReader](../MimiReader). PDF pages are rasterised with
+The PDF reader plugin for [MimiReader](https://github.com/villatothesea/MimiReader). PDF pages are rasterised with
 [hayro](https://crates.io/crates/hayro) (MIT/Apache-2.0).
 
 A plugin is a separate executable that speaks line-delimited JSON over stdio. The
@@ -10,10 +10,9 @@ holding `reader.toml` and the executable, found and hot-swapped by
 expects it as a sibling folder:
 
 ```text
-E:\Villa\VibeCoding\MimiReader\
+<workspace>\
   MimiReader\   the reader (crates\reader-sdk, crates\reader-host)
   PDFReader\    this repository
-  Agent\        the agent parts of Zeron
 ```
 
 ## Build and test
