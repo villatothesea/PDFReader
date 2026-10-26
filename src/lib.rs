@@ -28,12 +28,17 @@ pub mod convert;
 // MimiReader round 19 (O12): pages as images, the text layer as plain text.
 pub mod export;
 
-use std::{collections::VecDeque, path::Path, sync::Arc};
+use std::{
+    collections::{HashSet, VecDeque},
+    path::Path,
+    sync::{Arc, mpsc},
+    time::{Duration, Instant},
+};
 
 use hayro::{
     PixmapSettings, RenderCache, RenderSettings,
     hayro_interpret::InterpreterCache,
-    hayro_syntax::{LoadPdfError, Pdf},
+    hayro_syntax::{LoadPdfError, Pdf, page::Page},
     kurbo::Rect,
     vello_cpu::color::palette::css::{TRANSPARENT, WHITE},
 };
@@ -50,6 +55,13 @@ pub const ID: &str = "mireader.pdf";
 const MAX_PIXELS: f32 = 12_000_000.0;
 /// The pixmap's side is a `u16`.
 const MAX_SIDE: f32 = 16_384.0;
+/// Round 19 (the corpus sweep, bug1978317): the longest one call may spend
+/// interpreting a page, to draw it or to read its text. The corpus's next
+/// slowest whole file takes 7 s; the host gives up on a call at 60 s and
+/// restarts the reader, which no answer at all would cost.
+const PAGE_BUDGET: Duration = Duration::from_secs(20);
+/// What a page over [`PAGE_BUDGET`] answers, for its drawing and its text.
+const TOO_COMPLEX: &str = "This page is too complex to draw.";
 
 #[derive(Default)]
 pub struct PdfReader;
@@ -98,13 +110,19 @@ impl Reader for PdfReader {
 const SCANS_KEPT: usize = 24;
 
 pub struct PdfDocument {
-    pdf: Pdf,
+    /// Shared with a page's worker thread (see [`PdfDocument::within_budget`]).
+    pdf: Arc<Pdf>,
     info: DocumentInfo,
     /// Most recently used last.
     scans: VecDeque<(u32, Scan)>,
     /// Item 19: the edit session, when the file can be written back.
     editor: Option<edit::Editor>,
     password: Option<String>,
+    /// Round 19 (bug1978317): pages that ran over the budget. They answer
+    /// at once from then on; their work may still be running, and asking
+    /// again would only start it twice.
+    too_complex: HashSet<u32>,
+    budget: Duration,
 }
 
 /// A PDF text string: UTF-16BE with a BOM, UTF-8 with a BOM, or
@@ -162,11 +180,13 @@ impl PdfDocument {
         info.author = text(&metadata.author);
         info.outline = outline::read(&pdf);
         Ok(Self {
-            pdf,
+            pdf: Arc::new(pdf),
             info,
             scans: VecDeque::new(),
             editor: None,
             password: None,
+            too_complex: HashSet::new(),
+            budget: PAGE_BUDGET,
         })
     }
 
@@ -181,6 +201,7 @@ impl PdfDocument {
         self.info.outline = fresh.info.outline;
         self.info.page_labels = page_labels(self.editor.as_ref(), self.info.pages.len());
         self.scans.clear();
+        self.too_complex.clear();
         Ok(())
     }
 
@@ -190,17 +211,53 @@ impl PdfDocument {
             .ok_or_else(|| ReaderError::unsupported("this PDF can't be edited"))
     }
 
+    /// Round 19 (the corpus sweep, bug1978317): `work` on page `ix`, on a
+    /// thread of its own, waited for until `deadline`. hayro can't be
+    /// stopped part-way, so a page over the budget is left to finish on its
+    /// own and answers [`ErrorCode::TooComplex`], now and from then on.
+    fn within_budget<T: Send + 'static>(
+        &mut self,
+        ix: u32,
+        deadline: Instant,
+        work: impl FnOnce(&Page<'_>) -> T + Send + 'static,
+    ) -> Result<T, ReaderError> {
+        let too_complex = || ReaderError::new(ErrorCode::TooComplex, TOO_COMPLEX);
+        if self.too_complex.contains(&ix) {
+            return Err(too_complex());
+        }
+        if self.pdf.pages().get(ix as usize).is_none() {
+            return Err(ReaderError::bad_request(format!("no page {ix}")));
+        }
+        let pdf = self.pdf.clone();
+        let (sender, answer) = mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name(format!("pdf-page-{ix}"))
+            .spawn(move || {
+                let _ = sender.send(work(&pdf.pages()[ix as usize]));
+            })
+            .map_err(|e| ReaderError::new(ErrorCode::Internal, format!("no thread for the page: {e}")))?;
+        match answer.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(done) => Ok(done),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.too_complex.insert(ix);
+                Err(too_complex())
+            }
+            // The work panicked: re-raised here, where the server's guard
+            // turns it into this request's error, as before.
+            Err(mpsc::RecvTimeoutError::Disconnected) => match worker.join() {
+                Err(panic) => std::panic::resume_unwind(panic),
+                Ok(()) => unreachable!("the worker sends before it ends"),
+            },
+        }
+    }
+
     /// The scan of page `ix`, interpreted once and kept for a while.
-    fn scan(&mut self, ix: u32) -> Result<&Scan, ReaderError> {
+    fn scan(&mut self, ix: u32, deadline: Instant) -> Result<&Scan, ReaderError> {
         if let Some(at) = self.scans.iter().position(|(page, _)| *page == ix) {
             let entry = self.scans.remove(at).expect("position is in range");
             self.scans.push_back(entry);
         } else {
-            let pages = self.pdf.pages();
-            let page = pages
-                .get(ix as usize)
-                .ok_or_else(|| ReaderError::bad_request(format!("no page {ix}")))?;
-            let scan = Scan::page(page, &InterpreterCache::new());
+            let scan = self.within_budget(ix, deadline, |page| Scan::page(page, &InterpreterCache::new()))?;
             if self.scans.len() >= SCANS_KEPT {
                 self.scans.pop_front();
             }
@@ -257,7 +314,8 @@ impl Document for PdfDocument {
         // Round 13 (C3): every page is classified so the host can say why a
         // page keeps its own colours. The scan is cached and the text layer
         // needs it next anyway.
-        let scan = self.scan(ix)?;
+        let deadline = Instant::now() + self.budget;
+        let scan = self.scan(ix, deadline)?;
         let ground = match scan.ground {
             Ground::Plain => PageGround::Plain,
             Ground::Declared(_) => PageGround::Declared,
@@ -269,25 +327,16 @@ impl Document for PdfDocument {
             }
             Paper::Document => None,
         };
-        let pages = self.pdf.pages();
-        let page = pages
-            .get(ix as usize)
-            .ok_or_else(|| ReaderError::bad_request(format!("no page {ix}")))?;
-        let (width, height) = page.render_dimensions();
-        let scale = clamp_scale(width, height, scale);
-        let mut pixmap = hayro::render(
-            page,
-            &RenderCache::new(),
-            &crate::fallback::settings(),
-            &RenderSettings::default(),
-            &PixmapSettings {
-                x_scale: scale,
-                y_scale: scale,
-                // A themed plain page is drawn on nothing: the host's ground
-                // shows through.
-                bg_color: if themed.is_some() { TRANSPARENT } else { WHITE },
-            },
-        );
+        // A themed plain page is drawn on nothing: the host's ground shows
+        // through.
+        let bg_color = if themed.is_some() { TRANSPARENT } else { WHITE };
+        let (scale, mut pixmap) = self.within_budget(ix, deadline, move |page| {
+            let (width, height) = page.render_dimensions();
+            let scale = clamp_scale(width, height, scale);
+            let settings = PixmapSettings { x_scale: scale, y_scale: scale, bg_color };
+            let pixmap = hayro::render(page, &RenderCache::new(), &crate::fallback::settings(), &RenderSettings::default(), &settings);
+            (scale, pixmap)
+        })?;
         let (width, height) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
         if let Some((background, ink, images)) = themed {
             let s = scale as f64;
@@ -304,7 +353,7 @@ impl Document for PdfDocument {
     }
 
     fn page_text(&mut self, page: u32) -> Result<PageText, ReaderError> {
-        let mut text = self.scan(page)?.text();
+        let mut text = self.scan(page, Instant::now() + self.budget)?.text();
         // Round 14 (#5): the page's links ride with its text.
         text.links = links::read(&self.pdf, page);
         Ok(text)
@@ -312,7 +361,7 @@ impl Document for PdfDocument {
 
     /// The page's plain text (search).
     fn text(&mut self, index: u32) -> Result<String, ReaderError> {
-        Ok(self.scan(index)?.text().text)
+        Ok(self.scan(index, Instant::now() + self.budget)?.text().text)
     }
 
     fn annotations(&mut self, page: u32) -> Result<Vec<Annotation>, ReaderError> {

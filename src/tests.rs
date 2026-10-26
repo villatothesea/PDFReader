@@ -173,6 +173,37 @@ fn a_cmap_with_a_broken_header_still_maps() {
     assert_eq!(doc.page_text(0).unwrap().text.trim(), "Hi");
 }
 
+/// A deadline no test reaches.
+fn far() -> std::time::Instant {
+    std::time::Instant::now() + std::time::Duration::from_secs(3600)
+}
+
+/// Round 19 (the corpus sweep, bug1978317): a page hayro takes too long to
+/// interpret answers within the budget, "too complex", instead of never;
+/// its text then answers at once, and the other pages still draw. The
+/// fixture's first page costs seconds in a debug build and a quarter of one
+/// in release (its links' object stream is read quadratically); the budget
+/// here is 50 ms. Without the budget the render comes back late and drawn,
+/// and this fails on its error.
+#[test]
+fn a_page_over_its_time_budget_answers_too_complex() {
+    use std::time::{Duration, Instant};
+    let mut doc = PdfDocument::new(fixtures::build_slow_annotations(3000)).unwrap();
+    doc.budget = Duration::from_millis(50);
+    let started = Instant::now();
+    let error = doc.render_page(0, 1.0).map(|_| started.elapsed()).unwrap_err();
+    let took = started.elapsed();
+    assert_eq!(error.code, ErrorCode::TooComplex, "{error:?}");
+    assert_eq!(error.message, "This page is too complex to draw.");
+    assert!(took < Duration::from_millis(1000), "answered at the budget: {took:?}");
+    let started = Instant::now();
+    assert_eq!(doc.page_text(0).unwrap_err().code, ErrorCode::TooComplex);
+    assert!(started.elapsed() < Duration::from_millis(100), "the text answers at once: {:?}", started.elapsed());
+    doc.budget = super::PAGE_BUDGET;
+    let other = doc.render_page(1, 1.0).unwrap();
+    assert_eq!(fixtures::pixel(&other.png, 100, 50), [0, 0, 255, 255], "the next page still draws");
+}
+
 #[test]
 fn renders_pages_at_the_requested_scale() {
     let mut doc = PdfDocument::new(fixtures::build()).unwrap();
@@ -255,10 +286,10 @@ fn page_text_is_in_reading_order_with_one_box_per_char() {
 #[test]
 fn pages_are_classified_by_their_ground() {
     let mut doc = PdfDocument::new(fixtures::build_rich()).unwrap();
-    assert_eq!(doc.scan(0).unwrap().ground, Ground::Plain);
-    assert!(matches!(doc.scan(1).unwrap().ground, Ground::Declared([255, 0, 0, 255])));
-    assert_eq!(doc.scan(2).unwrap().ground, Ground::Image);
-    assert_eq!(doc.scan(3).unwrap().ground, Ground::Plain);
+    assert_eq!(doc.scan(0, far()).unwrap().ground, Ground::Plain);
+    assert!(matches!(doc.scan(1, far()).unwrap().ground, Ground::Declared([255, 0, 0, 255])));
+    assert_eq!(doc.scan(2, far()).unwrap().ground, Ground::Image);
+    assert_eq!(doc.scan(3, far()).unwrap().ground, Ground::Plain);
     // Round 13 (C3): every rendered page tells the host its ground, on
     // either paper.
     use mireader_reader_sdk::{Document as _, PageGround};

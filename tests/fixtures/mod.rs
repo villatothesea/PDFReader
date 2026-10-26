@@ -326,6 +326,81 @@ pub fn build_need_appearances_own_look() -> Vec<u8> {
     )
 }
 
+/// Round 19 (the corpus sweep, bug1978317): two 200×100 pt pages, the
+/// first with `links` link annotations that all live in one object stream.
+/// hayro reads every object of an object stream by parsing the stream's
+/// whole offset table again, so walking the page's annotations costs
+/// `links`² — 32,768 links took 54 s, while drawing the page itself took
+/// 75 ms. Both pages draw a blue rectangle at (20,20)–(180,80).
+pub fn build_slow_annotations(links: usize) -> Vec<u8> {
+    let first = 6; // the annotations' object numbers start here
+    let objstm = first + links;
+    let annots: String = (first..objstm).map(|n| format!("{n} 0 R ")).collect();
+    let objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".to_vec(),
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 5 0 R /Resources << >> /Annots [{annots}] >>").into_bytes(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 5 0 R /Resources << >> >>".to_vec(),
+        stream("", b"0 0 1 rg 20 20 160 60 re f
+"),
+    ];
+    let annot = b"<< /Type /Annot /Subtype /Link /Rect [0 0 1 1] /Border [0 0 0] /A << /S /URI /URI (https://example.com/) >> >>
+";
+    let (mut table, mut bodies) = (String::new(), Vec::new());
+    for n in 0..links {
+        table.push_str(&format!("{} {} ", first + n, n * annot.len()));
+        bodies.extend_from_slice(annot);
+    }
+    let table = format!("{table}
+");
+    let objstm_body = stream(&format!("/Type /ObjStm /N {links} /First {}", table.len()), &[table.as_bytes(), &bodies].concat());
+
+    let mut out = b"%PDF-1.5
+".to_vec();
+    let mut offsets = Vec::new();
+    let mut put = |out: &mut Vec<u8>, number: usize, body: &[u8]| {
+        offsets.push(out.len());
+        out.extend(format!("{number} 0 obj
+").into_bytes());
+        out.extend(body);
+        out.extend(b"
+endobj
+");
+    };
+    for (ix, body) in objects.iter().enumerate() {
+        put(&mut out, ix + 1, body);
+    }
+    put(&mut out, objstm, &objstm_body);
+    let xref_at = out.len();
+    let xref = objstm + 1;
+    // Entries of 1 + 4 + 2 bytes: type, offset or object stream, generation or index.
+    let entry = |kind: u8, field: usize, extra: usize| {
+        let mut e = vec![kind];
+        e.extend_from_slice(&(field as u32).to_be_bytes());
+        e.extend_from_slice(&(extra as u16).to_be_bytes());
+        e
+    };
+    let mut rows = entry(0, 0, 65535);
+    for offset in &offsets[..objects.len()] {
+        rows.extend(entry(1, *offset, 0));
+    }
+    for n in 0..links {
+        rows.extend(entry(2, objstm, n));
+    }
+    rows.extend(entry(1, offsets[objects.len()], 0));
+    rows.extend(entry(1, xref_at, 0));
+    out.extend(format!("{xref} 0 obj
+").into_bytes());
+    out.extend(stream(&format!("/Type /XRef /Size {} /W [1 4 2] /Root 1 0 R", xref + 1), &rows));
+    out.extend(format!("
+endobj
+startxref
+{xref_at}
+%%EOF
+").into_bytes());
+    out
+}
+
 fn stream(dict: &str, data: &[u8]) -> Vec<u8> {
     [
         format!("<< {dict} /Length {} >>\nstream\n", data.len()).into_bytes(),
