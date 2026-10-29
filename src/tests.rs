@@ -524,6 +524,58 @@ mod editing {
         assert_eq!(open(&copy).annotations(0).unwrap().len(), 2);
     }
 
+    /// Round 20 (#173): a note's thread — a reply lists under its parent
+    /// (`in_reply_to`), with its own date; it can be edited and deleted;
+    /// the parent can't be deleted alone while it has replies, only with
+    /// them; the thread survives a save and reopen; another reader's reply
+    /// is listed read only.
+    #[test]
+    fn a_note_keeps_a_thread_of_replies() {
+        let (_dir, path) = file(&fixtures::build());
+        let mut doc = open(&path);
+        let (_, parent) = doc.edit(EditOp::AddNote { page: 0, at: [20.0, 20.0], contents: "first".into(), color: None }).unwrap();
+        let parent = parent.expect("the note's id");
+        let (_, reply) = doc.edit(EditOp::AddReply { parent: parent.clone(), contents: "a reply".into() }).unwrap();
+        let reply = reply.expect("the reply's id");
+        let listed = doc.annotations(0).unwrap();
+        let r = listed.iter().find(|a| a.id == reply).expect("the reply is listed");
+        assert_eq!(r.in_reply_to.as_deref(), Some(parent.as_str()));
+        assert_eq!(r.contents.as_deref(), Some("a reply"));
+        assert!(r.editable && r.modified.is_some(), "ours, dated: {r:?}");
+        doc.edit(EditOp::SetContents { id: reply.clone(), contents: "edited".into() }).unwrap();
+        assert!(doc.edit(EditOp::Delete { id: parent.clone() }).is_err(), "not alone while it has replies");
+        doc.save().unwrap();
+
+        let mut doc = open(&path);
+        let listed = doc.annotations(0).unwrap();
+        let r = listed.iter().find(|a| a.id == reply).expect("after reopening");
+        assert_eq!((r.in_reply_to.as_deref(), r.contents.as_deref()), (Some(parent.as_str()), Some("edited")));
+        doc.edit(EditOp::DeleteThread { id: parent.clone() }).unwrap();
+        assert!(doc.annotations(0).unwrap().iter().all(|a| a.id != parent && a.id != reply), "the thread goes whole");
+    }
+
+    /// Round 20 (#173): a reply another reader wrote is shown, read only.
+    #[test]
+    fn another_readers_reply_is_read_only() {
+        let (_dir, path) = file(&fixtures::build());
+        let mut doc = open(&path);
+        let (_, parent) = doc.edit(EditOp::AddNote { page: 0, at: [20.0, 20.0], contents: "first".into(), color: None }).unwrap();
+        let (_, reply) = doc.edit(EditOp::AddReply { parent: parent.unwrap(), contents: "theirs".into() }).unwrap();
+        doc.save().unwrap();
+        // Another program's name on the reply.
+        let bytes = std::fs::read(&path).unwrap();
+        let ours = b"(MimiReader)";
+        let at = bytes.windows(ours.len()).rposition(|w| w == ours).expect("the reply's author");
+        let mut theirs = bytes.clone();
+        theirs.splice(at..at + ours.len(), b"(OtherApp00)".iter().copied());
+        std::fs::write(&path, &theirs).unwrap();
+        let mut doc = open(&path);
+        let listed = doc.annotations(0).unwrap();
+        let r = listed.iter().find(|a| Some(&a.id) == reply.as_ref()).expect("listed, not dropped");
+        assert_eq!(r.author.as_deref(), Some("OtherApp00"));
+        assert!(!r.editable, "read only");
+    }
+
     /// Round 19 (the corpus sweep, P2): the appearances drawn for display
     /// are never saved. The editor works on the file's own bytes, so a save
     /// after an edit appends only the edit, and the field still has no /AP.

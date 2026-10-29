@@ -120,6 +120,15 @@ fn kind_of(subtype: &[u8]) -> AnnotationKind {
 }
 
 /// The annotation's id: its `/NM` when it has one, else its object number.
+/// Round 20 (#173): `D:YYYYMMDDHHmm…` as `YYYY-MM-DD HH:MM`.
+fn minute(raw: &str) -> Option<String> {
+    let digits: String = raw.trim().trim_start_matches("D:").chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 12 {
+        return None;
+    }
+    Some(format!("{}-{}-{} {}:{}", &digits[0..4], &digits[4..6], &digits[6..8], &digits[8..10], &digits[10..12]))
+}
+
 fn id_of(doc: &Cos, entry: &Object, dict: &Dict, page: usize, index: usize) -> String {
     if let Some(name) = text(doc, dict.get(b"NM")) {
         return name;
@@ -323,6 +332,8 @@ impl Editor {
                 .collect();
             let color = numbers(doc, dict.get(b"C"));
             let kind = kind_of(&subtype);
+            // Round 20 (#173): the comment this one replies to.
+            let in_reply_to = dict.get(b"IRT").and_then(|irt| doc.dict(irt).map(|parent| id_of(doc, irt, &parent, page_ix as usize, index)));
             let locked = dict.int(b"F").is_some_and(|flags| flags & LOCKED != 0);
             let editable = !locked
                 && !self.kinds.is_empty()
@@ -339,10 +350,27 @@ impl Editor {
                 color: (color.len() == 3).then(|| [color[0] as f32, color[1] as f32, color[2] as f32]),
                 contents: text(doc, dict.get(b"Contents")),
                 author: text(doc, dict.get(b"T")),
-                editable,
+                // Round 20 (#173): a reply written by another reader is
+                // shown, read only — never dropped.
+                editable: editable && (in_reply_to.is_none() || text(doc, dict.get(b"T")).as_deref() == Some(AUTHOR)),
+                in_reply_to,
+                modified: text(doc, dict.get(b"M")).and_then(|m| minute(&m)),
             });
         }
         Ok(out)
+    }
+
+    /// Round 20 (#173): whether any comment replies to `id`.
+    fn has_replies(&self, id: &str) -> bool {
+        let doc = &self.current.doc;
+        self.pages().iter().enumerate().any(|(page_ix, page)| {
+            annots_of(doc, page).iter().enumerate().any(|(index, entry)| {
+                doc.dict(entry)
+                    .and_then(|dict| dict.get(b"IRT").cloned())
+                    .and_then(|irt| doc.dict(&irt).map(|parent| id_of(doc, &irt, &parent, page_ix, index)))
+                    .is_some_and(|parent| parent == id)
+            })
+        })
     }
 
     /// The page and `/Annots` index of comment `id`.
@@ -464,8 +492,25 @@ impl Editor {
             }
             EditOp::Delete { id } => {
                 let (page_ix, index) = self.find(&id)?;
+                // Round 20 (#173): never orphan a thread's replies.
+                if self.has_replies(&id) {
+                    return Err(ReaderError::bad_request("this comment has replies; delete the thread"));
+                }
                 pdfcraft_annot::delete_annotation(doc, page_ix, index).map_err(failed)?;
                 Ok(None)
+            }
+            // Round 20 (#173): the comment and its replies (pdfcraft
+            // deletes what points at it, to a fixpoint).
+            EditOp::DeleteThread { id } => {
+                let (page_ix, index) = self.find(&id)?;
+                pdfcraft_annot::delete_annotation(doc, page_ix, index).map_err(failed)?;
+                Ok(None)
+            }
+            EditOp::AddReply { parent, contents } => {
+                let (page_ix, index) = self.find(&parent)?;
+                let meta = self.meta();
+                pdfcraft_annot::add_reply(doc, page_ix, index, &contents, AUTHOR, &meta).map_err(failed)?;
+                Ok(Some(meta.id))
             }
             EditOp::AddBookmark { parent, index, title, page } => {
                 pdfcraft_organize::add_bookmark(doc, &parent, index, &title, page as usize).map_err(failed)?;
