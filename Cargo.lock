@@ -911,6 +911,7 @@ dependencies = [
  "serde_json",
  "toml",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
