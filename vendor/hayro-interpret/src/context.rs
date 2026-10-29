@@ -1,3 +1,4 @@
+// Modified by MimiReader: the viewer's layer switches applied to the optional content state. See vendor/PATCHES.md.
 use crate::cache::{Cache, CacheKey};
 use crate::color::{Color, ColorSpace};
 use crate::convert::convert_transform;
@@ -88,9 +89,13 @@ impl<'a> Context<'a> {
     ) -> Self {
         let ocg_state = {
             let root_ref = xref.root_id();
-            xref.get::<Dict<'_>>(root_ref)
+            let mut state = xref
+                .get::<Dict<'_>>(root_ref)
                 .map(|catalog| OcgState::from_catalog(&catalog))
-                .unwrap_or_default()
+                .unwrap_or_default();
+            // MimiReader patch 5: the viewer's layer switches.
+            state.apply_overrides(&settings.ocg_overrides);
+            state
         };
 
         Self {

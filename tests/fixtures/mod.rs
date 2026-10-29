@@ -459,6 +459,24 @@ fn write_pdf(objects: &[Vec<u8>], trailer_extra: &str) -> Vec<u8> {
     out
 }
 
+/// Round 20 (#175, #176): a 200×100 pt page whose blue rectangle at
+/// (20,20)–(180,80) is drawn inside layer "Notes" (on by default), and an
+/// attached file `data.csv` (8 bytes, modified 2026-10-29).
+pub fn build_layer_and_attachment() -> Vec<u8> {
+    write_pdf(
+        &[
+            b"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R] /D << /ON [5 0 R] >> >> /Names << /EmbeddedFiles << /Names [(data.csv) 6 0 R] >> >> >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Properties << /L1 5 0 R >> >> >>".to_vec(),
+            stream("", b"/OC /L1 BDC 0 0 1 rg 20 20 160 60 re f EMC\n"),
+            b"<< /Type /OCG /Name (Notes) >>".to_vec(),
+            b"<< /Type /Filespec /F (data.csv) /UF (data.csv) /EF << /F 7 0 R >> >>".to_vec(),
+            stream("/Type /EmbeddedFile /Params << /Size 8 /ModDate (D:20261029120000) >>", b"a,b\n1,2\n"),
+        ],
+        "",
+    )
+}
+
 /// Every pixel of a PNG as straight RGBA, with its width.
 pub fn pixels(png: &[u8]) -> (Vec<[u8; 4]>, u32) {
     let decoder = png::Decoder::new(std::io::Cursor::new(png));

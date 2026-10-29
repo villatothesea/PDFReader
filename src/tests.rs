@@ -111,6 +111,52 @@ fn fields_and_comments_without_appearances_are_drawn() {
     assert!(red[0] > 180 && red[1] < 90 && red[2] < 90, "the square comment's red border: {red:?}");
 }
 
+/// Round 20 (#175): an attached file is listed with its size and date,
+/// and written out decoded.
+#[test]
+fn an_attachment_is_listed_and_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("layered.pdf");
+    std::fs::write(&path, fixtures::build_layer_and_attachment()).unwrap();
+    let mut doc = mireader_reader_sdk::Reader::open(&mut crate::PdfReader, &path).unwrap();
+    let properties = doc.properties().unwrap();
+    assert_eq!(properties.attachments, ["data.csv"]);
+    assert_eq!(
+        properties.files,
+        [mireader_reader_sdk::Attachment { name: "data.csv".into(), size: Some(8), modified: Some("2026-10-29".into()) }]
+    );
+    let out = dir.path().join("out.csv");
+    doc.save_attachment(0, &out).unwrap();
+    assert_eq!(std::fs::read(&out).unwrap(), b"a,b\n1,2\n");
+    assert!(doc.save_attachment(1, &out).is_err(), "no second one");
+}
+
+/// Round 20 (#176): a layer is listed with its state, and switching it
+/// off takes its content off the page (and on again brings it back); the
+/// file is not changed.
+#[test]
+fn a_switched_off_layer_leaves_the_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("layered.pdf");
+    std::fs::write(&path, fixtures::build_layer_and_attachment()).unwrap();
+    let mut doc = mireader_reader_sdk::Reader::open(&mut crate::PdfReader, &path).unwrap();
+    let states = doc.properties().unwrap().layer_states;
+    assert_eq!(states, [mireader_reader_sdk::Layer { name: "Notes".into(), on: true }]);
+    let blue = |doc: &mut Box<dyn Document>| {
+        let page = doc.render_page(0, 1.0).unwrap();
+        let px = fixtures::pixel(&page.png, 100, 50);
+        px[2] > 200 && px[0] < 80
+    };
+    assert!(blue(&mut doc), "on: the rectangle shows");
+    doc.set_layers(&[false]).unwrap();
+    assert!(!blue(&mut doc), "off: it doesn't");
+    assert!(!doc.properties().unwrap().layer_states[0].on, "and says so");
+    doc.set_layers(&[true]).unwrap();
+    assert!(blue(&mut doc), "on again");
+    assert!(doc.set_layers(&[true, false]).is_err(), "one state per layer");
+    assert!(!doc.info().edit.is_some_and(|e| e.state.dirty), "the document isn't changed");
+}
+
 /// Round 19 (the corpus sweep, resetform_parent): a push button without an
 /// appearance is drawn with its caption and colours, as every form's Reset
 /// or Submit button left to the viewer; a button with its own look keeps it.

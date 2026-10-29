@@ -123,6 +123,9 @@ pub struct PdfDocument {
     /// again would only start it twice.
     too_complex: HashSet<u32>,
     budget: Duration,
+    /// Round 20 (#176): the layers the reader switched (index-aligned with
+    /// `properties::layers`); `None`: the file's own default.
+    layers_on: Option<Vec<bool>>,
 }
 
 /// A PDF text string: UTF-16BE with a BOM, UTF-8 with a BOM, or
@@ -139,6 +142,21 @@ fn decode_text(bytes: &[u8]) -> String {
 }
 
 impl PdfDocument {
+    /// Round 20 (#176): each switched layer's group and whether it shows,
+    /// for the renderer (empty: the file's own default).
+    fn layer_overrides(&self) -> std::sync::Arc<Vec<(hayro::hayro_syntax::object::ObjectIdentifier, bool)>> {
+        let (Some(on), Some(editor)) = (&self.layers_on, &self.editor) else {
+            return Default::default();
+        };
+        std::sync::Arc::new(
+            properties::layers(editor.document())
+                .into_iter()
+                .zip(on)
+                .map(|((reference, ..), on)| (hayro::hayro_syntax::object::ObjectIdentifier::new(reference.num as i32, i32::from(reference.generation)), *on))
+                .collect(),
+        )
+    }
+
     pub fn new(bytes: Vec<u8>) -> Result<Self, ReaderError> {
         Self::with_password(bytes, None)
     }
@@ -187,6 +205,7 @@ impl PdfDocument {
             password: None,
             too_complex: HashSet::new(),
             budget: PAGE_BUDGET,
+            layers_on: None,
         })
     }
 
@@ -297,7 +316,16 @@ impl Document for PdfDocument {
     /// renderer read.
     fn properties(&mut self) -> Result<mireader_reader_sdk::DocumentProperties, ReaderError> {
         Ok(match &self.editor {
-            Some(editor) => properties::read(editor.document()),
+            Some(editor) => {
+                let mut properties = properties::read(editor.document());
+                // Round 20 (#176): what shows now, not the file's default.
+                if let Some(on) = &self.layers_on {
+                    for (layer, on) in properties.layer_states.iter_mut().zip(on) {
+                        layer.on = *on;
+                    }
+                }
+                properties
+            }
             None => mireader_reader_sdk::DocumentProperties {
                 title: self.info.title.clone(),
                 author: self.info.author.clone(),
@@ -308,6 +336,27 @@ impl Document for PdfDocument {
 
     fn render_page(&mut self, page: u32, scale: f32) -> Result<RenderedPage, ReaderError> {
         self.render_page_on(page, scale, Paper::Document)
+    }
+
+    /// Round 20 (#175): the attachment, decoded, written to `path` (the
+    /// host asked before replacing anything there).
+    fn save_attachment(&mut self, index: usize, path: &std::path::Path) -> Result<(), ReaderError> {
+        let editor = self.editor.as_ref().ok_or_else(|| ReaderError::unsupported("this document's attachments can't be read"))?;
+        let bytes = properties::attachment_bytes(editor.document(), index).map_err(ReaderError::invalid)?;
+        std::fs::write(path, bytes)?;
+        Ok(())
+    }
+
+    /// Round 20 (#176): the layers that show from now on — a view setting:
+    /// the file isn't changed (saving a new default is a later step).
+    fn set_layers(&mut self, on: &[bool]) -> Result<(), ReaderError> {
+        let editor = self.editor.as_ref().ok_or_else(|| ReaderError::unsupported("this document's layers can't be read"))?;
+        let count = properties::layers(editor.document()).len();
+        if on.len() != count {
+            return Err(ReaderError::bad_request(format!("{count} layers, {} states", on.len())));
+        }
+        self.layers_on = Some(on.to_vec());
+        Ok(())
     }
 
     fn render_page_on(&mut self, ix: u32, scale: f32, paper: Paper) -> Result<RenderedPage, ReaderError> {
@@ -330,11 +379,15 @@ impl Document for PdfDocument {
         // A themed plain page is drawn on nothing: the host's ground shows
         // through.
         let bg_color = if themed.is_some() { TRANSPARENT } else { WHITE };
+        // Round 20 (#176): the layers the reader switched.
+        let overrides = self.layer_overrides();
         let (scale, mut pixmap) = self.within_budget(ix, deadline, move |page| {
             let (width, height) = page.render_dimensions();
             let scale = clamp_scale(width, height, scale);
             let settings = PixmapSettings { x_scale: scale, y_scale: scale, bg_color };
-            let pixmap = hayro::render(page, &RenderCache::new(), &crate::fallback::settings(), &RenderSettings::default(), &settings);
+            let mut interpreter = crate::fallback::settings();
+            interpreter.ocg_overrides = overrides;
+            let pixmap = hayro::render(page, &RenderCache::new(), &interpreter, &RenderSettings::default(), &settings);
             (scale, pixmap)
         })?;
         let (width, height) = (u32::from(pixmap.width()), u32::from(pixmap.height()));

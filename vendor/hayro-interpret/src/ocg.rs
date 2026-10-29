@@ -1,3 +1,4 @@
+// Modified by MimiReader: layer switches applied over the default configuration. See vendor/PATCHES.md.
 use hayro_syntax::object::dict::keys::{BASE_STATE, D, OCGS, OCMD, OCPROPERTIES, OFF, ON, P, TYPE};
 use hayro_syntax::object::{Array, Dict, Name, ObjectIdentifier};
 use std::collections::HashSet;
@@ -62,6 +63,18 @@ impl OcgState {
         Self {
             inactive_ocgs: inactive,
             visibility_stack: Vec::new(),
+        }
+    }
+
+    /// MimiReader patch 5: switch groups on or off over the default
+    /// configuration.
+    pub(crate) fn apply_overrides(&mut self, overrides: &[(ObjectIdentifier, bool)]) {
+        for (id, on) in overrides {
+            if *on {
+                self.inactive_ocgs.remove(id);
+            } else {
+                self.inactive_ocgs.insert(*id);
+            }
         }
     }
 

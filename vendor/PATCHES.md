@@ -85,6 +85,22 @@ already says, and has a test that fails without it.
   (its fixture draws glyph 0 for every CID, so no other path can name
   them).
 
+### 5. The viewer can switch layers over the default configuration
+
+- **Files:** `hayro-interpret/src/interpret/mod.rs` (`InterpreterSettings::ocg_overrides`),
+  `hayro-interpret/src/context.rs` (applied where the optional content state
+  is built), `hayro-interpret/src/ocg.rs` (`OcgState::apply_overrides`).
+- **Why:** round 20 (#176) lets the reader turn a layer on or off. hayro reads
+  only the document's default configuration (`/OCProperties /D`), so there
+  was no way to show a layer the file starts hidden, or hide one it shows.
+- **Change:** a list of (group, shown) the caller passes, empty by default,
+  is applied over the default configuration: a group switched on leaves the
+  inactive set, one switched off joins it. With the list empty nothing
+  changes. This is the one patch that adds a setting rather than reading
+  more of the file; it takes nothing away from what hayro reads.
+- **Test:** PDFReader `a_switched_off_layer_leaves_the_page` (the rectangle in
+  the layer shows, then doesn't, then does again).
+
 ### Considered and not made
 
 - **A ToUnicode stream compressed without a /Filter** (issue19802). The fix

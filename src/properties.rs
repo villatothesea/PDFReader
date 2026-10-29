@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use mireader_reader_sdk::{DocumentProperties, FontInfo, Permissions};
+use mireader_reader_sdk::{Attachment, DocumentProperties, FontInfo, Layer, Permissions};
 use pdfcraft_cos::{Dict, Document as Cos, Object};
 
 /// The 14 fonts every PDF viewer carries (ISO 32000-1 §9.6.2.2).
@@ -136,7 +136,7 @@ impl Fonts<'_> {
 }
 
 /// The names in a name tree (attachments), up to a bound.
-fn name_tree(doc: &Cos, node: &Object, out: &mut Vec<String>, budget: &mut usize) {
+fn name_tree(doc: &Cos, node: &Object, out: &mut Vec<(String, Object)>, budget: &mut usize) {
     let Some(node) = doc.dict(node) else { return };
     if let Some(names) = node.get(b"Names").map(|n| doc.resolve(n))
         && let Some(names) = names.as_array()
@@ -149,7 +149,7 @@ fn name_tree(doc: &Cos, node: &Object, out: &mut Vec<String>, budget: &mut usize
             if let Some(key) = doc.resolve(&pair[0]).as_string() {
                 // The file's own name when it gives one, else the key.
                 let shown = pair.get(1).and_then(|spec| doc.dict(spec)).and_then(|spec| text(doc, &spec, b"UF").or_else(|| text(doc, &spec, b"F")));
-                out.push(shown.unwrap_or_else(|| key.to_text()));
+                out.push((shown.unwrap_or_else(|| key.to_text()), pair.get(1).cloned().unwrap_or(Object::Null)));
             }
         }
     }
@@ -163,6 +163,71 @@ fn name_tree(doc: &Cos, node: &Object, out: &mut Vec<String>, budget: &mut usize
             name_tree(doc, kid, out, budget);
         }
     }
+}
+
+/// Round 20 (#175): every attached file — its name and its file
+/// specification — in the name tree's order (what `files` lists).
+pub(crate) fn attached(doc: &Cos) -> Vec<(String, Object)> {
+    let mut out = Vec::new();
+    let root = doc.root().map(|r| doc.get(r)).and_then(|r| r.as_dict().cloned());
+    if let Some(files) = root
+        .as_ref()
+        .and_then(|root| root.get(b"Names"))
+        .and_then(|n| doc.dict(n))
+        .and_then(|names| names.get(b"EmbeddedFiles").cloned())
+    {
+        let mut budget = 10_000;
+        name_tree(doc, &files, &mut out, &mut budget);
+    }
+    out
+}
+
+/// A file specification's embedded stream (`/EF /UF`, else `/EF /F`).
+fn embedded_stream(doc: &Cos, spec: &Object) -> Option<std::sync::Arc<Object>> {
+    let spec = doc.dict(spec)?;
+    let ef = doc.dict(spec.get(b"EF")?)?;
+    let stream = ef.get(b"UF").or_else(|| ef.get(b"F")).map(|s| doc.resolve(s))?;
+    matches!(&*stream, Object::Stream(_)).then_some(stream)
+}
+
+/// Round 20 (#175): attached file `index`, decoded (at most the decoder's
+/// bomb limit).
+pub(crate) fn attachment_bytes(doc: &Cos, index: usize) -> Result<Vec<u8>, String> {
+    let (_, spec) = attached(doc).into_iter().nth(index).ok_or("no such attachment")?;
+    let stream = embedded_stream(doc, &spec).ok_or("the attachment has no embedded data")?;
+    match &*stream {
+        Object::Stream(stream) => stream.decoded().map_err(|error| error.to_string()),
+        _ => Err("the attachment has no embedded data".into()),
+    }
+}
+
+/// Round 20 (#176): the layers — each group's reference, its name, and
+/// whether the default configuration (`/OCProperties /D`: `/BaseState`,
+/// `/ON`, `/OFF`) shows it.
+pub(crate) fn layers(doc: &Cos) -> Vec<(pdfcraft_cos::ObjRef, String, bool)> {
+    let Some(root) = doc.root().map(|r| doc.get(r)).and_then(|r| r.as_dict().cloned()) else { return Vec::new() };
+    let Some(oc) = root.get(b"OCProperties").and_then(|o| doc.dict(o)) else { return Vec::new() };
+    let Some(groups) = oc.get(b"OCGs").map(|g| doc.resolve(g)).and_then(|g| g.as_array().cloned()) else { return Vec::new() };
+    let config = oc.get(b"D").and_then(|d| doc.dict(d));
+    let base_on = config.as_ref().and_then(|c| c.name(b"BaseState")) != Some(b"OFF".as_slice());
+    let listed = |key: &[u8]| -> Vec<pdfcraft_cos::ObjRef> {
+        config
+            .as_ref()
+            .and_then(|c| c.get(key))
+            .map(|a| doc.resolve(a))
+            .and_then(|a| a.as_array().map(|items| items.iter().filter_map(Object::as_ref).collect()))
+            .unwrap_or_default()
+    };
+    let (on, off) = (listed(b"ON"), listed(b"OFF"));
+    groups
+        .iter()
+        .filter_map(|g| {
+            let reference = g.as_ref()?;
+            let name = doc.dict(g).and_then(|d| text(doc, &d, b"Name")).unwrap_or_default();
+            let shown = if off.contains(&reference) { false } else if on.contains(&reference) { true } else { base_on };
+            Some((reference, name, shown))
+        })
+        .collect()
 }
 
 /// How many fields a form has (its terminal fields).
@@ -224,9 +289,13 @@ pub(crate) fn read(doc: &Cos) -> DocumentProperties {
         .map(|(name, (embedded, standard))| FontInfo { name, embedded, standard: standard && !embedded })
         .collect();
     if let Some(root) = &root {
-        if let Some(files) = root.get(b"Names").and_then(|n| doc.dict(n)).and_then(|names| names.get(b"EmbeddedFiles").cloned()) {
-            let mut budget = 10_000;
-            name_tree(doc, &files, &mut properties.attachments, &mut budget);
+        for (name, spec) in attached(doc) {
+            let stream = embedded_stream(doc, &spec);
+            let params = stream.as_ref().and_then(|s| s.as_dict().and_then(|d| d.get(b"Params")).and_then(|p| doc.dict(p)));
+            let size = params.as_ref().and_then(|p| p.get(b"Size")).and_then(|s| doc.resolve(s).as_int()).and_then(|n| u64::try_from(n).ok());
+            let modified = params.as_ref().and_then(|p| text(doc, p, b"ModDate")).and_then(|d| date(&d));
+            properties.attachments.push(name.clone());
+            properties.files.push(Attachment { name, size, modified });
         }
         properties.fields = fields(doc, root);
         if let Some(ocgs) = root
@@ -237,6 +306,7 @@ pub(crate) fn read(doc: &Cos) -> DocumentProperties {
         {
             properties.layers = ocgs.iter().filter_map(|g| doc.dict(g)).map(|g| text(doc, &g, b"Name").unwrap_or_default()).collect();
         }
+        properties.layer_states = layers(doc).into_iter().map(|(_, name, on)| Layer { name, on }).collect();
     }
     properties.permissions = doc.permissions().map(|p| Permissions { encrypted: true, print: p.print(), copy: p.copy(), modify: p.modify(), annotate: p.annotate() });
     properties

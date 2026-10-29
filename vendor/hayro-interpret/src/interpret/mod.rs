@@ -1,3 +1,4 @@
+// Modified by MimiReader: InterpreterSettings::ocg_overrides. See vendor/PATCHES.md.
 use crate::FillRule;
 use crate::color::ColorSpace;
 use crate::context::Context;
@@ -100,6 +101,10 @@ pub struct InterpreterSettings {
     /// Note that this feature is currently not fully implemented yet, so some
     /// annotations might be missing.
     pub render_annotations: bool,
+    /// MimiReader patch 5: optional content groups the viewer switched — each
+    /// group's object and whether it shows — applied over the document's
+    /// default configuration (`/OCProperties /D`).
+    pub ocg_overrides: Arc<Vec<(hayro_syntax::object::ObjectIdentifier, bool)>>,
 }
 
 impl Default for InterpreterSettings {
@@ -118,6 +123,7 @@ impl Default for InterpreterSettings {
             cmap_resolver: Arc::new(|_| None),
             warning_sink: Arc::new(|_| {}),
             render_annotations: true,
+            ocg_overrides: Arc::new(Vec::new()),
         }
     }
 }
