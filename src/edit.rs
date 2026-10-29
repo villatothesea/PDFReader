@@ -506,6 +506,55 @@ impl Editor {
                 pdfcraft_annot::delete_annotation(doc, page_ix, index).map_err(failed)?;
                 Ok(None)
             }
+            // Round 20 (#174): a markup's new words. QuadPoints and Rect
+            // are written, and its appearance is drawn again.
+            EditOp::SetQuads { id, quads } => {
+                let (page_ix, index) = self.find(&id)?;
+                let geometry = pages.get(page_ix).cloned().ok_or_else(|| ReaderError::bad_request("no such page"))?;
+                let entry = annots_of(doc, &geometry).get(index).cloned().ok_or_else(|| ReaderError::bad_request(format!("no comment {id}")))?;
+                let reference = entry.as_ref().ok_or_else(|| ReaderError::unsupported("this comment can't be reshaped"))?;
+                let dict = doc.dict(&entry).ok_or_else(|| ReaderError::bad_request(format!("no comment {id}")))?;
+                if !matches!(dict.name(b"Subtype"), Some(b"Highlight" | b"Underline" | b"StrikeOut" | b"Squiggly")) {
+                    return Err(ReaderError::bad_request("only a text markup takes new words"));
+                }
+                if dict.int(b"F").is_some_and(|flags| flags & LOCKED != 0) {
+                    return Err(ReaderError::unsupported("the comment is locked"));
+                }
+                if quads.is_empty() {
+                    return Err(ReaderError::bad_request("a markup needs some text to cover"));
+                }
+                let mut points = Vec::with_capacity(quads.len() * 8);
+                for q in &quads {
+                    for corner in 0..4 {
+                        let p = to_user(doc, &geometry, q[corner * 2], q[corner * 2 + 1]);
+                        points.extend(p);
+                    }
+                }
+                let (xs, ys): (Vec<f64>, Vec<f64>) = points.chunks_exact(2).map(|p| (p[0], p[1])).unzip();
+                let fold = |v: &[f64], f: fn(f64, f64) -> f64, start: f64| v.iter().copied().fold(start, f);
+                let rect = [fold(&xs, f64::min, f64::MAX), fold(&ys, f64::min, f64::MAX), fold(&xs, f64::max, f64::MIN), fold(&ys, f64::max, f64::MIN)];
+                let meta = self.meta();
+                doc.update_dict(reference, |d| {
+                    d.set(b"QuadPoints".to_vec(), Object::Array(points.iter().map(|v| Object::Real(*v)).collect()));
+                    d.set(b"Rect".to_vec(), Object::Array(rect.iter().map(|v| Object::Real(*v)).collect()));
+                    if let Some(date) = &meta.date {
+                        d.set(b"M".to_vec(), Object::String(pdfcraft_cos::PdfString::text(date)));
+                    }
+                })
+                .map_err(failed)?;
+                pdfcraft_annot::set_appearance(doc, reference).map_err(failed)?;
+                Ok(None)
+            }
+            // Round 20 (#174): a sticky note moved (its pop-up with it).
+            EditOp::Move { id, dx, dy } => {
+                let (page_ix, index) = self.find(&id)?;
+                let geometry = pages.get(page_ix).cloned().ok_or_else(|| ReaderError::bad_request("no such page"))?;
+                let origin = to_user(doc, &geometry, 0.0, 0.0);
+                let moved = to_user(doc, &geometry, dx, dy);
+                let meta = self.meta();
+                pdfcraft_annot::move_annotation(doc, page_ix, index, moved[0] - origin[0], moved[1] - origin[1], &meta).map_err(failed)?;
+                Ok(None)
+            }
             EditOp::AddReply { parent, contents } => {
                 let (page_ix, index) = self.find(&parent)?;
                 let meta = self.meta();

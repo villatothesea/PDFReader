@@ -524,6 +524,38 @@ mod editing {
         assert_eq!(open(&copy).annotations(0).unwrap().len(), 2);
     }
 
+    /// Round 20 (#174): a highlight takes new words (QuadPoints and Rect
+    /// rewritten, still a highlight), a note moves by an offset, and undo
+    /// and redo take each back as one step; a note can't take quads.
+    #[test]
+    fn a_comment_is_reshaped_and_moved_in_single_steps() {
+        let (_dir, path) = file(&fixtures::build());
+        let mut doc = open(&path);
+        let quad = |x0: f32, y0: f32, x1: f32, y1: f32| [x0, y0, x1, y0, x0, y1, x1, y1];
+        let (_, mark) = doc
+            .edit(EditOp::AddMarkup { page: 0, kind: mireader_reader_sdk::MarkupKind::Highlight, quads: vec![quad(20.0, 20.0, 60.0, 30.0)], color: None, contents: None })
+            .unwrap();
+        let mark = mark.unwrap();
+        let rect_of = |doc: &mut Box<dyn Document>, id: &str| doc.annotations(0).unwrap().into_iter().find(|a| a.id == id).map(|a| a.rect).unwrap();
+        doc.edit(EditOp::SetQuads { id: mark.clone(), quads: vec![quad(20.0, 20.0, 140.0, 30.0), quad(20.0, 34.0, 80.0, 44.0)] }).unwrap();
+        let reshaped = doc.annotations(0).unwrap().into_iter().find(|a| a.id == mark).unwrap();
+        assert_eq!(reshaped.quads.len(), 2, "a quad per line");
+        assert!((reshaped.rect[2] - 140.0).abs() < 0.5 && (reshaped.rect[3] - 44.0).abs() < 0.5, "{:?}", reshaped.rect);
+        assert_eq!(reshaped.kind, mireader_reader_sdk::AnnotationKind::Highlight);
+        doc.undo().unwrap();
+        assert!((rect_of(&mut doc, &mark)[2] - 60.0).abs() < 0.5, "one undo step");
+        doc.redo().unwrap();
+        assert!((rect_of(&mut doc, &mark)[2] - 140.0).abs() < 0.5, "and redo");
+
+        let (_, note) = doc.edit(EditOp::AddNote { page: 0, at: [100.0, 50.0], contents: "here".into(), color: None }).unwrap();
+        let note = note.unwrap();
+        let before = rect_of(&mut doc, &note);
+        doc.edit(EditOp::Move { id: note.clone(), dx: 12.0, dy: 5.0 }).unwrap();
+        let after = rect_of(&mut doc, &note);
+        assert!((after[0] - before[0] - 12.0).abs() < 0.5 && (after[1] - before[1] - 5.0).abs() < 0.5, "{before:?} -> {after:?}");
+        assert!(doc.edit(EditOp::SetQuads { id: note, quads: vec![quad(1.0, 1.0, 2.0, 2.0)] }).is_err(), "a note has no words");
+    }
+
     /// Round 20 (#173): a note's thread — a reply lists under its parent
     /// (`in_reply_to`), with its own date; it can be edited and deleted;
     /// the parent can't be deleted alone while it has replies, only with
