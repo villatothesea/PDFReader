@@ -190,6 +190,11 @@ impl Editor {
         let doc = Cos::open_with_password(bytes.clone(), password).ok()?;
         // Round 19 (T1 item 6): and the Info dictionary's four fields.
         let mut kinds = vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark, EditKind::Info];
+        // Round 20 (#177): filling its form, when it has one — never an
+        // encrypted one (it would be half-written; #180 catalogues that).
+        if doc.permissions().is_none() && !pdfcraft_forms::fields(&doc).is_empty() {
+            kinds.push(EditKind::Form);
+        }
         let mut guard = None;
         if let Some(permissions) = doc.permissions()
             && !(permissions.annotate() && permissions.modify())
@@ -360,6 +365,65 @@ impl Editor {
         Ok(out)
     }
 
+    /// Round 20 (#177): the form's fields in tab order (page, then the
+    /// page's own order), each widget in display space.
+    pub(crate) fn form_fields(&self) -> Vec<mireader_reader_sdk::FormField> {
+        use mireader_reader_sdk::{FieldKind, FieldWidget, FormField};
+        let doc = &self.current.doc;
+        let pages = self.pages();
+        let undrawn: std::collections::HashMap<String, char> = pdfcraft_forms::undrawn_fields(doc).into_iter().collect();
+        let mut fields: Vec<FormField> = pdfcraft_forms::fields(doc)
+            .into_iter()
+            .map(|f| {
+                let kind = match f.kind {
+                    pdfcraft_forms::FieldKind::Text => FieldKind::Text,
+                    pdfcraft_forms::FieldKind::CheckBox => FieldKind::Check,
+                    pdfcraft_forms::FieldKind::Radio => FieldKind::Radio,
+                    pdfcraft_forms::FieldKind::Combo => FieldKind::Combo,
+                    pdfcraft_forms::FieldKind::List => FieldKind::List,
+                    pdfcraft_forms::FieldKind::Signature => FieldKind::Signature,
+                    pdfcraft_forms::FieldKind::PushButton => FieldKind::Button,
+                };
+                let widgets = f
+                    .widgets
+                    .iter()
+                    .filter(|w| !w.hidden)
+                    .filter_map(|w| {
+                        let page = pages.get(w.page?)?;
+                        let corners = [to_display(doc, page, w.rect[0], w.rect[1]), to_display(doc, page, w.rect[2], w.rect[3])];
+                        let rect = [
+                            corners[0][0].min(corners[1][0]),
+                            corners[0][1].min(corners[1][1]),
+                            corners[0][0].max(corners[1][0]),
+                            corners[0][1].max(corners[1][1]),
+                        ];
+                        Some((w.tab, FieldWidget { page: w.page? as u32, rect, on_state: w.on_state.clone() }))
+                    })
+                    .collect::<Vec<_>>();
+                let order = widgets.iter().map(|(tab, w)| (w.page, *tab)).min().unwrap_or((u32::MAX, usize::MAX));
+                let field = FormField {
+                    read_only: f.read_only(),
+                    multiline: f.flags & pdfcraft_forms::flags::MULTILINE != 0,
+                    max_len: f.max_len.map(|n| n as u32),
+                    undrawable: undrawn.get(&f.name).copied(),
+                    name: f.name,
+                    kind,
+                    value: f.value,
+                    options: f.options,
+                    widgets: widgets.into_iter().map(|(_, w)| w).collect(),
+                };
+                (order, field)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(order, field)| (order, field))
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect();
+        fields.retain(|f| !f.widgets.is_empty());
+        fields
+    }
+
     /// Round 20 (#173): whether any comment replies to `id`.
     fn has_replies(&self, id: &str) -> bool {
         let doc = &self.current.doc;
@@ -504,6 +568,26 @@ impl Editor {
             EditOp::DeleteThread { id } => {
                 let (page_ix, index) = self.find(&id)?;
                 pdfcraft_annot::delete_annotation(doc, page_ix, index).map_err(failed)?;
+                Ok(None)
+            }
+            // Round 20 (#177): a field filled; text and choices get new
+            // appearance streams, buttons switch their states.
+            EditOp::SetField { name, value } => {
+                let field = pdfcraft_forms::fields(doc).into_iter().find(|f| f.name == name).ok_or_else(|| ReaderError::bad_request(format!("no field {name}")))?;
+                if field.read_only() {
+                    return Err(ReaderError::unsupported("this field is read only"));
+                }
+                let value = match value {
+                    mireader_reader_sdk::FieldValue::Text(text) => pdfcraft_forms::FieldValue::Text(text),
+                    mireader_reader_sdk::FieldValue::Check(on) => pdfcraft_forms::FieldValue::Check(on),
+                    mireader_reader_sdk::FieldValue::Radio(state) => pdfcraft_forms::FieldValue::Radio(state),
+                    mireader_reader_sdk::FieldValue::Choice(values) => pdfcraft_forms::FieldValue::Choice(values),
+                };
+                pdfcraft_forms::set_value(doc, &name, &value).map_err(failed)?;
+                Ok(None)
+            }
+            EditOp::ClearForm => {
+                pdfcraft_forms::reset(doc, None).map_err(failed)?;
                 Ok(None)
             }
             // Round 20 (#174): a markup's new words. QuadPoints and Rect

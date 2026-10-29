@@ -340,6 +340,11 @@ impl Document for PdfDocument {
         self.render_page_on(page, scale, Paper::Document)
     }
 
+    /// Round 20 (#177): the form's fields, as the edit session has them.
+    fn form_fields(&mut self) -> Result<Vec<mireader_reader_sdk::FormField>, ReaderError> {
+        Ok(self.editor.as_ref().map(edit::Editor::form_fields).unwrap_or_default())
+    }
+
     /// Round 20 (#175): the attachment, decoded, written to `path` (the
     /// host asked before replacing anything there).
     fn save_attachment(&mut self, index: usize, path: &std::path::Path) -> Result<(), ReaderError> {

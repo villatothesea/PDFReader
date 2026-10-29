@@ -524,6 +524,33 @@ mod editing {
         assert_eq!(open(&copy).annotations(0).unwrap().len(), 2);
     }
 
+    /// Round 20 (#177): a form is listed field by field in tab order, with
+    /// its widgets in display space; a text field fills (its appearance
+    /// drawn again, so the page shows it), survives a save and reopen, and
+    /// Clear form takes it back to its default; the reader may fill forms.
+    #[test]
+    fn a_form_is_filled_saved_and_cleared() {
+        use mireader_reader_sdk::{EditKind, FieldKind, FieldValue};
+        let (_dir, path) = file(&fixtures::build_without_appearances());
+        let mut doc = open(&path);
+        assert!(doc.info().edit.expect("editable").kinds.contains(&EditKind::Form), "it has a form to fill");
+        let fields = doc.form_fields().unwrap();
+        let names: Vec<(&str, FieldKind)> = fields.iter().map(|f| (f.name.as_str(), f.kind)).collect();
+        assert_eq!(names, [("name", FieldKind::Text), ("agree", FieldKind::Check)], "in tab order: {fields:?}");
+        let name = &fields[0];
+        assert_eq!(name.value, ["Hello"]);
+        let r = name.widgets[0].rect;
+        assert!((r[0] - 20.0).abs() < 0.5 && (r[1] - 10.0).abs() < 0.5 && (r[2] - 180.0).abs() < 0.5 && (r[3] - 40.0).abs() < 0.5, "display space: {r:?}");
+        doc.edit(EditOp::SetField { name: "name".into(), value: FieldValue::Text("Worldwide".into()) }).unwrap();
+        assert!(doc.page_text(0).unwrap().text.contains("Worldwide"), "the page shows the value");
+        doc.save().unwrap();
+        let mut doc = open(&path);
+        assert_eq!(doc.form_fields().unwrap()[0].value, ["Worldwide"], "kept");
+        doc.edit(EditOp::ClearForm).unwrap();
+        assert!(doc.form_fields().unwrap()[0].value.iter().all(|v| v.is_empty()), "back to its default (none)");
+        assert!(doc.edit(EditOp::SetField { name: "nope".into(), value: FieldValue::Text("x".into()) }).is_err());
+    }
+
     /// Round 20 (#174): a highlight takes new words (QuadPoints and Rect
     /// rewritten, still a highlight), a note moves by an offset, and undo
     /// and redo take each back as one step; a note can't take quads.
