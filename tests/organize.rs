@@ -104,6 +104,8 @@ fn the_reader_reads_and_offers_its_page_tools() {
             "Convert to Markdown",
             "Convert to plain text…",
             "Save pages as images…",
+            // Round 20 (#197).
+            "Save a clean copy",
             "Extract pages…",
             "Reorder pages…",
             "Split every N pages…",

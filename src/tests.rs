@@ -494,6 +494,121 @@ mod editing {
         [x0, y0, x1, y0, x0, y1, x1, y1]
     }
 
+    /// Round 20 (#197): a clean copy drops the revisions an incremental
+    /// save piled up, is checked by both readers, and leaves the original.
+    #[test]
+    fn a_clean_copy_is_whole_checked_and_smaller() {
+        let (dir, path) = file(&fixtures::build_rich());
+        let mut doc = open(&path);
+        for n in 0..4 {
+            doc.edit(EditOp::AddNote { page: 0, at: [20.0 + 10.0 * n as f32, 20.0], contents: format!("note {n}"), color: None }).unwrap();
+            doc.save().unwrap();
+            doc.undo().unwrap();
+            doc.save().unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let mut progress = |_: mireader_reader_sdk::Progress| {};
+        let never = || false;
+        let mut job = mireader_reader_sdk::Job::new(crate::rewrite::ACTION, vec![path.clone()], Default::default(), Some(out.clone()), &mut progress, &never);
+        let output = crate::rewrite::run(&mut job).expect("the copy passes its check");
+        assert_eq!(output.files.len(), 1);
+        assert!(output.notes.iter().any(|n| n.contains("checked")), "{:?}", output.notes);
+        let clean = std::fs::read(&output.files[0]).unwrap();
+        assert!(clean.len() < before.len(), "the piled-up revisions are gone: {} < {}", clean.len(), before.len());
+        assert_eq!(clean.windows(5).filter(|w| w == b"%%EOF").count(), 1, "one revision");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "the original untouched");
+        let mut copy = PdfReader.open(std::path::Path::new(&output.files[0])).unwrap();
+        assert_eq!(copy.annotations(0).unwrap().len(), 0, "the undone notes stay undone");
+    }
+
+    /// Round 20 (#197): a damaged file says what was repaired — here its
+    /// cross-reference table and trailer are gone altogether.
+    #[test]
+    fn a_damaged_file_opens_and_says_what_was_repaired() {
+        let original = fixtures::build_rich();
+        let cut = original.windows(4).rposition(|w| w == b"xref").expect("the xref table");
+        let damaged = original[..cut].to_vec();
+        let (_dir, path) = file(&damaged);
+        let mut doc = open(&path);
+        assert!(!doc.info().pages.is_empty(), "the pages are there");
+        let properties = doc.properties().unwrap();
+        assert!(!properties.repairs.is_empty(), "and the repair is said: {properties:?}");
+        assert!(doc.info().edit.expect("readable").rebuilt, "a rebuilt file is never saved over");
+    }
+
+    /// Round 20 (#197): cross-reference streams and object streams (what a
+    /// full rewrite writes) read like a classic table.
+    #[test]
+    fn xref_and_object_streams_read() {
+        let cos = pdfcraft_cos::Document::open(std::sync::Arc::new(fixtures::build_rich())).unwrap();
+        let streamed = pdfcraft_cos::write_full(&cos, &pdfcraft_cos::SaveOptions::default()).unwrap();
+        assert!(streamed.windows(5).any(|w| w == b"/XRef"), "an xref stream was written");
+        assert!(streamed.windows(7).any(|w| w == b"/ObjStm"), "and an object stream");
+        let (_dir, path) = file(&streamed);
+        let mut doc = open(&path);
+        let (_odir, opath) = file(&fixtures::build_rich());
+        let mut plain = open(&opath);
+        assert_eq!(doc.info().pages.len(), plain.info().pages.len());
+        assert_eq!(doc.page_text(0).unwrap().text, plain.page_text(0).unwrap().text, "the same text");
+        assert!(doc.properties().unwrap().repairs.is_empty(), "nothing to repair");
+    }
+
+    /// Round 20 (#197): each save is a revision; the list shows them, and an
+    /// earlier one is written out as it was — the current file untouched.
+    #[test]
+    fn earlier_revisions_are_listed_and_written_out_unchanged() {
+        let original = fixtures::build_rich();
+        let (_dir, path) = file(&original);
+        let mut doc = open(&path);
+        assert!(doc.properties().unwrap().revisions.is_empty(), "one revision: no list");
+        doc.edit(EditOp::AddNote { page: 0, at: [20.0, 20.0], contents: "one".into(), color: None }).unwrap();
+        doc.save().unwrap();
+        doc.edit(EditOp::AddNote { page: 0, at: [40.0, 40.0], contents: "two".into(), color: None }).unwrap();
+        doc.save().unwrap();
+        let revisions = doc.properties().unwrap().revisions;
+        assert_eq!(revisions.len(), 3, "{revisions:?}");
+        assert!(revisions.windows(2).all(|w| w[0].end < w[1].end));
+        let now = std::fs::read(&path).unwrap();
+        let first = path.with_file_name("first.pdf");
+        doc.save_revision(0, &first).unwrap();
+        assert_eq!(std::fs::read(&first).unwrap(), original, "the first revision is the original file");
+        let second = path.with_file_name("second.pdf");
+        doc.save_revision(1, &second).unwrap();
+        assert_eq!(open(&second).annotations(0).unwrap().len(), 1, "the second has one note");
+        assert_eq!(std::fs::read(&path).unwrap(), now, "the file itself untouched");
+        assert!(doc.save_revision(9, &first).is_err());
+    }
+
+    /// Round 20 (#197): each permission on its own. Comments allowed, but
+    /// not changes or taking the pages apart: the comment tools stay, the
+    /// Info fields and bookmarks go, the page tools refuse.
+    #[test]
+    fn each_permission_is_enforced_on_its_own() {
+        let mut cos = pdfcraft_cos::Document::open(std::sync::Arc::new(fixtures::build_rich())).unwrap();
+        // Bits from 1: modify is 4, assemble 11.
+        cos.set_encryption(&pdfcraft_cos::NewEncryption {
+            algorithm: pdfcraft_cos::Algorithm::Aes256,
+            user_password: "",
+            owner_password: "owner",
+            permissions: -1 & !(1 << 3) & !(1 << 10),
+            encrypt_metadata: true,
+            seed: [5; 32],
+        })
+        .unwrap();
+        let locked = pdfcraft_cos::write_full(&cos, &pdfcraft_cos::SaveOptions::default()).unwrap();
+        let (_dir, path) = file(&locked);
+        let mut doc = open(&path);
+        let kinds = doc.info().edit.expect("comments allowed").kinds;
+        assert!(kinds.contains(&EditKind::Markup) && kinds.contains(&EditKind::Note), "comments: {kinds:?}");
+        assert!(!kinds.contains(&EditKind::Info) && !kinds.contains(&EditKind::Bookmark), "no changes, no bookmarks: {kinds:?}");
+        let permissions = doc.properties().unwrap().permissions.expect("encrypted");
+        assert!(permissions.annotate && permissions.print && !permissions.modify && !permissions.assemble && !permissions.owner);
+        let refused = crate::organize::open(&path).err().expect("the page tools refuse");
+        assert!(refused.message.contains("security settings"), "{refused:?}");
+    }
+
     /// Round 19 (the corpus sweep): a file whose structure had to be rebuilt
     /// is never saved over — the writer would rewrite it whole and the
     /// original bytes would be gone. The reader says so, refuses Save, takes

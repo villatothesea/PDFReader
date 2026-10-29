@@ -23,6 +23,8 @@ mod display;
 mod properties;
 // Round 17 (O6): page organising — the reader's own tools.
 pub mod organize;
+// Round 20 (#197): a clean, checked copy written whole.
+pub mod rewrite;
 // MimiReader round 18: Convert to Markdown, from the retired PDFInspector.
 pub mod convert;
 // MimiReader round 19 (O12): pages as images, the text layer as plain text.
@@ -83,7 +85,22 @@ impl Reader for PdfReader {
 
     fn open_with_password(&mut self, path: &Path, password: Option<&str>) -> Result<Box<dyn Document>, ReaderError> {
         let bytes = std::fs::read(path)?;
-        let mut doc = PdfDocument::with_password(bytes.clone(), password)?;
+        // Round 20 (#197): a file the renderer can't read at all may still
+        // be rebuilt — pdfcraft scans it for its objects and writes them
+        // out whole; the pages come from that, and the repair is said.
+        let mut repaired = Vec::new();
+        let mut doc = match PdfDocument::with_password(bytes.clone(), password) {
+            Ok(doc) => doc,
+            Err(error) if error.code != ErrorCode::Encrypted => match edit::repaired(&bytes, password) {
+                Some((fixed, log)) => {
+                    repaired = log;
+                    PdfDocument::with_password(fixed, password).map_err(|_| error)?
+                }
+                None => return Err(error),
+            },
+            Err(error) => return Err(error),
+        };
+        doc.repairs = repaired;
         // Item 19: editable when pdfcraft can write the file back.
         doc.editor = edit::Editor::open(path, Arc::new(bytes), password);
         doc.password = password.map(str::to_owned);
@@ -95,14 +112,33 @@ impl Reader for PdfReader {
     /// merge pages (its manifest's `[[actions]]`). MimiReader round 18: and
     /// converts to Markdown.
     fn run_job(&mut self, job: &mut mireader_reader_sdk::Job<'_>) -> Result<mireader_reader_sdk::ToolOutput, ReaderError> {
+        // Round 20 (#197): taking the text or the page images out is copying
+        // — a file whose settings don't allow it says so.
+        if job.action == convert::ACTION || matches!(job.action, export::TO_TEXT | export::TO_IMAGES) {
+            copying_allowed(job.path())?;
+        }
         if job.action == convert::ACTION {
             return convert::run(job);
+        }
+        if job.action == rewrite::ACTION {
+            return rewrite::run(job);
         }
         if matches!(job.action, export::TO_TEXT | export::TO_IMAGES) {
             return export::run(job);
         }
         organize::run(job)
     }
+}
+
+/// Round 20 (#197): refuse when `path`'s security settings don't allow its
+/// contents to be copied out.
+fn copying_allowed(path: &Path) -> Result<(), ReaderError> {
+    let bytes = std::fs::read(path)?;
+    let Ok(doc) = pdfcraft_cos::Document::open(Arc::new(bytes)) else { return Ok(()) };
+    if doc.permissions().is_some_and(|p| !p.copy()) {
+        return Err(ReaderError::new(ErrorCode::Unsupported, "This PDF's security settings don't allow its contents to be copied out."));
+    }
+    Ok(())
 }
 
 /// Page scans kept for reuse (text layer, ground, image rects). A scan is
@@ -126,6 +162,9 @@ pub struct PdfDocument {
     /// Round 20 (#176): the layers the reader switched (index-aligned with
     /// `properties::layers`); `None`: the file's own default.
     layers_on: Option<Vec<bool>>,
+    /// Round 20 (#197): what opening it had to repair beyond what the
+    /// editor's own reading records.
+    repairs: Vec<String>,
 }
 
 /// A PDF text string: UTF-16BE with a BOM, UTF-8 with a BOM, or
@@ -206,6 +245,7 @@ impl PdfDocument {
             too_complex: HashSet::new(),
             budget: PAGE_BUDGET,
             layers_on: None,
+            repairs: Vec::new(),
         })
     }
 
@@ -308,6 +348,8 @@ impl Document for PdfDocument {
     fn info(&self) -> DocumentInfo {
         let mut info = self.info.clone();
         info.edit = self.editor.as_ref().map(edit::Editor::info);
+        // Round 20 (#197): the security settings, for the host to keep to.
+        info.permissions = self.editor.as_ref().and_then(|editor| properties::permissions(editor.document()));
         info
     }
 
@@ -326,14 +368,34 @@ impl Document for PdfDocument {
                         layer.on = *on;
                     }
                 }
+                // Round 20 (#197): what was repaired, and the saved revisions.
+                properties.repairs = self.repairs.clone();
+                for line in editor.document().repair_log() {
+                    if !properties.repairs.contains(line) {
+                        properties.repairs.push(line.clone());
+                    }
+                }
+                properties.revisions = properties::revisions(editor.document(), editor.disk_bytes());
                 properties
             }
             None => mireader_reader_sdk::DocumentProperties {
                 title: self.info.title.clone(),
                 author: self.info.author.clone(),
+                repairs: self.repairs.clone(),
                 ..Default::default()
             },
         })
+    }
+
+    /// Round 20 (#197): the file as it was at saved revision `index` — its
+    /// bytes up to that revision's end, unchanged.
+    fn save_revision(&mut self, index: usize, path: &std::path::Path) -> Result<(), ReaderError> {
+        let editor = self.editor.as_ref().ok_or_else(|| ReaderError::unsupported("this document's revisions can't be read"))?;
+        let ends = editor.document().revision_ends();
+        let end = *ends.get(index).ok_or_else(|| ReaderError::bad_request("no such revision"))?;
+        let bytes = editor.disk_bytes();
+        std::fs::write(path, &bytes[..end.min(bytes.len())])?;
+        Ok(())
     }
 
     fn render_page(&mut self, page: u32, scale: f32) -> Result<RenderedPage, ReaderError> {

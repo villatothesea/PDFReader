@@ -351,8 +351,47 @@ pub(crate) fn read(doc: &Cos) -> DocumentProperties {
         }
         properties.layer_states = layers(doc).into_iter().map(|(_, name, on)| Layer { name, on }).collect();
     }
-    properties.permissions = doc.permissions().map(|p| Permissions { encrypted: true, print: p.print(), copy: p.copy(), modify: p.modify(), annotate: p.annotate() });
+    properties.permissions = permissions(doc);
     properties
+}
+
+/// Round 20 (#197): what `doc`'s security settings allow, flag by flag.
+pub(crate) fn permissions(doc: &Cos) -> Option<Permissions> {
+    doc.permissions().map(|p| Permissions {
+        encrypted: true,
+        print: p.print(),
+        copy: p.copy(),
+        modify: p.modify(),
+        annotate: p.annotate(),
+        // Round 20 (#197): every flag on its own.
+        fill_forms: p.fill_forms(),
+        assemble: p.assemble(),
+        print_high: p.print_high_quality(),
+        owner: p.owner,
+    })
+}
+
+/// Round 20 (#197): the file's saved revisions, oldest first — none listed
+/// when it has just one (or was rebuilt: its sections can't be trusted).
+/// A revision a signature covers exactly is marked.
+pub(crate) fn revisions(doc: &Cos, bytes: &[u8]) -> Vec<mireader_reader_sdk::Revision> {
+    let ends = doc.revision_ends();
+    if ends.len() < 2 {
+        return Vec::new();
+    }
+    let signed = signed_lengths(bytes);
+    ends.into_iter().map(|end| mireader_reader_sdk::Revision { end: end as u64, signed: signed.contains(&(end as u64)) }).collect()
+}
+
+/// The byte lengths the signatures in `bytes` cover.
+fn signed_lengths(bytes: &[u8]) -> Vec<u64> {
+    use pdfcraft_sign::pdf::TrustStore;
+    let Ok(doc) = Cos::open(std::sync::Arc::new(bytes.to_vec())) else { return Vec::new() };
+    pdfcraft_sign::pdf::list(&doc, bytes, &TrustStore { certs: Vec::new() })
+        .into_iter()
+        .filter(|info| info.signed)
+        .map(|info| info.signed_len as u64)
+        .collect()
 }
 
 #[cfg(test)]

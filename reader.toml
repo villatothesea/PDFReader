@@ -57,6 +57,15 @@ help = "150 for reading on screen, 300 for printing"
 # Round 17 (O6): the reader's own tools — page organising, moved here from
 # PDFInspector. Each writes a new PDF beside the original.
 
+# Round 20 (#197): the whole file written anew — only what the document
+# still reaches, packed — and checked by a second reader before it is kept.
+[[actions]]
+id = "rewrite-clean"
+title = "Save a clean copy"
+icon = "file-send"
+extensions = ["pdf"]
+files = "pdf"
+
 [[actions]]
 id = "extract-pages"
 title = "Extract pages…"

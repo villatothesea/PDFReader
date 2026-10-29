@@ -39,9 +39,18 @@ fn stem_of(path: &Path) -> String {
     path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "document".into())
 }
 
-fn open(path: &Path) -> Result<Document, ReaderError> {
+pub(crate) fn open(path: &Path) -> Result<Document, ReaderError> {
     let bytes = std::fs::read(path)?;
-    Document::open(Arc::new(bytes)).map_err(|error| ReaderError::invalid(format!("{} can't be read: {error}", name_of(path))))
+    let doc = Document::open(Arc::new(bytes)).map_err(|error| ReaderError::invalid(format!("{} can't be read: {error}", name_of(path))))?;
+    // Round 20 (#197): a file whose security settings don't allow its
+    // pages to be taken apart or put together isn't.
+    if doc.permissions().is_some_and(|p| !p.assemble()) {
+        return Err(ReaderError::new(
+            mireader_reader_sdk::ErrorCode::Unsupported,
+            format!("{}: its security settings don't allow its pages to be extracted, rearranged or combined", name_of(path)),
+        ));
+    }
+    Ok(doc)
 }
 
 fn pages_of(doc: &Document, path: &Path) -> Result<usize, ReaderError> {

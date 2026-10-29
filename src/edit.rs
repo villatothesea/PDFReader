@@ -196,14 +196,22 @@ impl Editor {
             kinds.push(EditKind::Form);
         }
         let mut guard = None;
-        if let Some(permissions) = doc.permissions()
-            && !(permissions.annotate() && permissions.modify())
-        {
-            kinds.clear();
-            guard = Some(EditGuard {
-                kind: GuardKind::Permissions,
-                message: "This PDF's security settings don't allow comments or changes.".into(),
+        // Round 20 (#197): each permission on its own (it was all or
+        // nothing): comments need annotate, the Info fields modify,
+        // bookmarks assemble, filling fill-forms.
+        if let Some(permissions) = doc.permissions() {
+            kinds.retain(|kind| match kind {
+                EditKind::Markup | EditKind::Note => permissions.annotate(),
+                EditKind::Info => permissions.modify(),
+                EditKind::Bookmark => permissions.assemble(),
+                EditKind::Form => permissions.fill_forms(),
             });
+            if kinds.is_empty() {
+                guard = Some(EditGuard {
+                    kind: GuardKind::Permissions,
+                    message: "This PDF's security settings don't allow comments or changes.".into(),
+                });
+            }
         }
         match signature(&doc) {
             Some(true) if guard.is_none() => {
@@ -786,4 +794,14 @@ fn same_file(a: &Path, b: &Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     }
+}
+/// Round 20 (#197): a file rebuilt from its objects — pdfcraft scans it when
+/// its cross-reference table can't be followed — written out whole, with
+/// what was repaired. `None`: nothing could be rebuilt either.
+pub(crate) fn repaired(bytes: &[u8], password: Option<&str>) -> Option<(Vec<u8>, Vec<String>)> {
+    let doc = Cos::open_with_password(Arc::new(bytes.to_vec()), password).ok()?;
+    let fixed = pdfcraft_cos::write_full(&doc, &pdfcraft_cos::SaveOptions::default()).ok()?;
+    let mut log: Vec<String> = doc.repair_log().to_vec();
+    log.push("The file was rewritten from its objects so its pages could be read.".into());
+    Some((fixed, log))
 }
