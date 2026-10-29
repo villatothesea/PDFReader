@@ -59,6 +59,87 @@ help = "150 for reading on screen, 300 for printing"
 
 # Round 20 (#197): the whole file written anew — only what the document
 # still reaches, packed — and checked by a second reader before it is kept.
+# Round 20 (#199): a print layout — a print-ready PDF that opens as the
+# preview; printing it prints what it shows.
+[[actions]]
+id = "print-layout"
+title = "Print layout…"
+icon = "file-send"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "layout"
+label = "Layout"
+kind = "choice"
+choices = ["1 page per sheet", "2 pages per sheet", "4 pages per sheet", "6 pages per sheet", "9 pages per sheet", "16 pages per sheet", "Booklet", "Poster"]
+default = "1 page per sheet"
+[[actions.params]]
+id = "paper"
+label = "Paper"
+kind = "choice"
+choices = ["Same as the pages", "A4", "US Letter", "A3", "US Legal", "A5", "Tabloid"]
+default = "Same as the pages"
+[[actions.params]]
+id = "pages"
+label = "Pages"
+kind = "pages"
+help = "Empty for all; for example 1-3, 7"
+[[actions.params]]
+id = "sheets"
+label = "Which pages"
+kind = "choice"
+choices = ["All pages", "Odd pages only", "Even pages only"]
+default = "All pages"
+help = "For two-sided printing by hand: odd pages, turn the stack over, then even pages in reverse. A booklet's are its fronts and backs."
+[[actions.params]]
+id = "reverse"
+label = "In reverse order"
+kind = "bool"
+[[actions.params]]
+id = "content"
+label = "Comments and forms"
+kind = "choice"
+choices = ["Document and comments", "Document only", "Document and stamps", "Form fields only"]
+default = "Document and comments"
+[[actions.params]]
+id = "border"
+label = "A border round each page (several per sheet)"
+kind = "bool"
+[[actions.params]]
+id = "binding"
+label = "Booklet binding"
+kind = "choice"
+choices = ["Left", "Right"]
+default = "Left"
+[[actions.params]]
+id = "poster_scale"
+label = "Poster size (%)"
+kind = "integer"
+default = 200
+min = 10
+max = 2000
+[[actions.params]]
+id = "cut_marks"
+label = "Poster cut marks"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "grayscale"
+label = "Grayscale"
+kind = "bool"
+[[actions.params]]
+id = "as_image"
+label = "Print as image"
+kind = "bool"
+help = "For a printer that draws a page wrong: every page is rendered first"
+[[actions.params]]
+id = "dpi"
+label = "Image resolution (DPI)"
+kind = "integer"
+default = 300
+min = 72
+max = 600
+
 # Round 20 (#198): security. Each writes a new file beside the original.
 [[actions]]
 id = "protect"

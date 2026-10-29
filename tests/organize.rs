@@ -104,7 +104,8 @@ fn the_reader_reads_and_offers_its_page_tools() {
             "Convert to Markdown",
             "Convert to plain text…",
             "Save pages as images…",
-            // Round 20 (#198, #197).
+            // Round 20 (#199, #198, #197).
+            "Print layout…",
             "Protect with a password…",
             "Remove security…",
             "Redact…",

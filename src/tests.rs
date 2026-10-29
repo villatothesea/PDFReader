@@ -603,6 +603,48 @@ mod editing {
         assert!(none.message.contains("Choose"), "{none:?}");
     }
 
+    /// Round 20 (#199): print layouts — four pages per sheet, a booklet,
+    /// a poster, odd pages in reverse, grayscale as images.
+    #[test]
+    fn print_layouts_impose_the_pages() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let mut source = open(&path);
+        let pages = source.info().pages.len();
+        let run = |params: serde_json::Value| -> (usize, PathBuf) {
+            let out = path.parent().unwrap().join("out-print");
+            let _ = std::fs::remove_dir_all(&out);
+            std::fs::create_dir_all(&out).unwrap();
+            let mut progress = |_: mireader_reader_sdk::Progress| {};
+            let never = || false;
+            let params = params.as_object().cloned().unwrap_or_default();
+            let mut job = mireader_reader_sdk::Job::new(crate::print_layout::ACTION, vec![path.clone()], params, Some(out), &mut progress, &never);
+            let output = crate::print_layout::run(&mut job).expect("a layout");
+            let file = PathBuf::from(&output.files[0]);
+            let kept = std::env::temp_dir().join(format!("mimi-print-{}.pdf", std::process::id()));
+            std::fs::copy(&file, &kept).unwrap();
+            (PdfReader.open(&kept).unwrap().info().pages.len(), kept)
+        };
+        let (four, _) = run(serde_json::json!({ "layout": "4 pages per sheet", "paper": "A4" }));
+        assert_eq!(four, pages.div_ceil(4), "four to a sheet");
+        let (booklet, _) = run(serde_json::json!({ "layout": "Booklet" }));
+        assert!(booklet >= pages.div_ceil(2), "a booklet's sides: {booklet}");
+        let (poster, _) = run(serde_json::json!({ "layout": "Poster", "poster_scale": 200, "pages": "1" }));
+        assert!(poster >= 4, "one page at 200 % on four or more sheets: {poster}");
+        let (odd, _) = run(serde_json::json!({ "sheets": "Odd pages only", "reverse": true }));
+        assert_eq!(odd, pages.div_ceil(2), "odd pages only");
+        let (grey, kept) = run(serde_json::json!({ "grayscale": true, "dpi": 72, "pages": "1" }));
+        assert_eq!(grey, 1);
+        let mut gray = PdfReader.open(&kept).unwrap();
+        let png = gray.render_page(0, 0.5).unwrap().png;
+        let decoder = png::Decoder::new(std::io::Cursor::new(png));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        let channels = info.color_type.samples();
+        let colourful = buf[..info.buffer_size()].chunks_exact(channels).filter(|p| channels >= 3 && (p[0].abs_diff(p[1]) > 8 || p[1].abs_diff(p[2]) > 8)).count();
+        assert_eq!(colourful, 0, "no colour left");
+    }
+
     /// Round 20 (#197): a clean copy drops the revisions an incremental
     /// save piled up, is checked by both readers, and leaves the original.
     #[test]

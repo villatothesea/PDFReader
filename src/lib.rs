@@ -27,6 +27,8 @@ pub mod organize;
 pub mod rewrite;
 // Round 20 (#198): passwords, redaction, hidden information.
 pub mod security;
+// Round 20 (#199): print layouts.
+pub mod print_layout;
 // MimiReader round 18: Convert to Markdown, from the retired PDFInspector.
 pub mod convert;
 // MimiReader round 19 (O12): pages as images, the text layer as plain text.
@@ -127,6 +129,9 @@ impl Reader for PdfReader {
         }
         if security::handles(job.action) {
             return security::run(job);
+        }
+        if job.action == print_layout::ACTION {
+            return print_layout::run(job);
         }
         if matches!(job.action, export::TO_TEXT | export::TO_IMAGES) {
             return export::run(job);
