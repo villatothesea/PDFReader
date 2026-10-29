@@ -371,3 +371,34 @@ fn organise_real_pdfs() {
     eprintln!("reversed {n} pages in {:?}", started.elapsed());
     assert_eq!(files.len(), 1);
 }
+
+/// Round 20 (#197–#199): the new tools through the real host and plugin
+/// process, typed as the form sends them (passwords, booleans, choices).
+#[test]
+fn the_security_print_and_clean_tools_run_through_the_host() {
+    let run = Run::new();
+    let book = run.pdf("book.pdf", 4);
+    let original = std::fs::read(&book).unwrap();
+    // A print layout: four pages on one sheet.
+    let (files, _) = run.job("print-layout", &[&book], serde_json::json!({ "layout": "4 pages per sheet", "paper": "A4", "border": true }), false).unwrap();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(files[0].0, "book (print layout).pdf");
+    assert_eq!(files[0].1.len(), 1, "one sheet");
+    // Redact a whole page.
+    let (files, _) = run.job("redact", &[&book], serde_json::json!({ "pages": "2" }), false).unwrap();
+    assert_eq!(files[0].0, "book (redacted).pdf");
+    // Protect, then remove with the permissions password.
+    let (files, _) = run
+        .job("protect", &[&book], serde_json::json!({ "open_password": "", "permissions_password": "owner", "allow_print": true, "allow_copy": false, "encryption": "AES 128-bit" }), false)
+        .unwrap();
+    assert_eq!(files[0].0, "book (protected).pdf");
+    // A clean copy.
+    let (files, _) = run.job("rewrite-clean", &[&book], serde_json::json!({}), false).unwrap();
+    assert_eq!(files[0].0, "book (clean).pdf");
+    assert_eq!(files[0].1, vec![1, 2, 3, 4], "the same pages");
+    // Remove hidden information.
+    let (files, _) = run.job("remove-hidden", &[&book], serde_json::json!({ "metadata": true }), false).unwrap();
+    assert_eq!(files[0].0, "book (cleaned).pdf");
+    assert_eq!(std::fs::read(&book).unwrap(), original, "the original is never changed");
+}
+

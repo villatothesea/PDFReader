@@ -34,10 +34,11 @@ pdfcraft-create = { git = "https://github.com/storytold/pdfcraft", rev = "3e968c
 # Round 20 (#198): redaction and hidden-information removal.
 pdfcraft-crypt = { git = "https://github.com/storytold/pdfcraft", rev = "3e968c8aa24adfb729c6d45a3c98abf5fed07027" }
 pdfcraft-redact = { git = "https://github.com/storytold/pdfcraft", rev = "3e968c8aa24adfb729c6d45a3c98abf5fed07027" }
+# Round 20 (#199): grayscale print pages (it was a test-only dependency).
+png = "0.18"
 
 [dev-dependencies]
 mireader-reader-host = { path = "../MimiReader/crates/reader-host" }
-png = "0.18"
 tempfile = "3"
 # Round 17 (O6): the page tools' job parameters in tests/organize.rs.
 serde_json = "1"
