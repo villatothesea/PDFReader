@@ -318,6 +318,8 @@ impl Document for PdfDocument {
         Ok(match &self.editor {
             Some(editor) => {
                 let mut properties = properties::read(editor.document());
+                // Round 20 (#178): the signatures, from the file's own bytes.
+                properties.signatures = properties::signatures(editor.disk_bytes());
                 // Round 20 (#176): what shows now, not the file's default.
                 if let Some(on) = &self.layers_on {
                     for (layer, on) in properties.layer_states.iter_mut().zip(on) {

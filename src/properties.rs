@@ -230,6 +230,49 @@ pub(crate) fn layers(doc: &Cos) -> Vec<(pdfcraft_cos::ObjRef, String, bool)> {
         .collect()
 }
 
+/// Round 20 (#178): every signature field, verified over `bytes` — the
+/// file as it is on disk (a signature covers bytes, so it is never read
+/// off an edited copy). No trust list and no network: a signer's identity
+/// is never taken as established, and a valid certificate is "unknown",
+/// not "valid".
+pub(crate) fn signatures(bytes: &[u8]) -> Vec<mireader_reader_sdk::Signature> {
+    use mireader_reader_sdk::{Integrity, Signature};
+    use pdfcraft_sign::pdf::{Modification, Status, TrustStore};
+    let Ok(doc) = Cos::open(std::sync::Arc::new(bytes.to_vec())) else { return Vec::new() };
+    pdfcraft_sign::pdf::list(&doc, bytes, &TrustStore { certs: Vec::new() })
+        .into_iter()
+        .filter(|info| !info.doc_timestamp)
+        .map(|info| {
+            let unchecked = info.details.iter().any(|d| d.pattern.starts_with("PdfCraft can't check this signature yet"));
+            let integrity = if !info.signed {
+                Integrity::Unsigned
+            } else if info.status == Status::Invalid {
+                Integrity::Broken
+            } else if unchecked {
+                Integrity::Unverifiable
+            } else {
+                Integrity::Intact
+            };
+            let (changes, changes_allowed) = match &info.modification {
+                Modification::None => (Vec::new(), true),
+                Modification::Allowed(kinds) => (kinds.iter().map(|k| k.to_string()).collect(), true),
+                Modification::Disallowed(kinds) => (kinds.iter().map(|k| k.to_string()).collect(), false),
+            };
+            Signature {
+                field: info.field.clone(),
+                signer: info.signer.clone(),
+                date: info.date.as_deref().and_then(date).or(info.date.clone()),
+                page: info.page.map(|p| p as u32),
+                integrity,
+                identity_trusted: info.status == Status::Valid,
+                bytes_after: if info.signed { (bytes.len() as u64).saturating_sub(info.signed_len as u64) } else { 0 },
+                changes,
+                changes_allowed,
+            }
+        })
+        .collect()
+}
+
 /// How many fields a form has (its terminal fields).
 fn fields(doc: &Cos, root: &Dict) -> u32 {
     let Some(form) = root.get(b"AcroForm").and_then(|f| doc.dict(f)) else { return 0 };

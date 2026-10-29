@@ -157,6 +157,45 @@ fn a_switched_off_layer_leaves_the_page() {
     assert!(!doc.info().edit.is_some_and(|e| e.state.dirty), "the document isn't changed");
 }
 
+/// Round 20 (#178): a signature is verified from the file's own bytes —
+/// intact as signed, its signer named but the identity unverifiable
+/// offline (no trust list, no network: never a silent "valid"); a byte
+/// changed inside the signed range breaks it; bytes added after signing
+/// are reported, not hidden.
+#[test]
+fn a_signature_is_verified_from_the_files_own_bytes() {
+    use mireader_reader_sdk::Integrity;
+    use pdfcraft_sign::{der::Time, keys::PrivateKey, pdf::SignOptions, pkcs12::DigitalId, x509::{Certificate, Name}};
+    // Test only: the reader verifies, it never signs.
+    let key = PrivateKey::generate_p256().unwrap();
+    let certificate = Certificate::self_signed(&Name::build("Pat Signer", "", "", "", "US"), &key, Time::from_pdf("D:20260101000000Z").unwrap(), 5, &[1]).unwrap();
+    let id = DigitalId { key, certificate, chain: Vec::new(), friendly_name: None };
+    let doc = pdfcraft_cos::Document::open(std::sync::Arc::new(fixtures::build())).unwrap();
+    let options = SignOptions { date: "D:20261029120000Z".into(), ..Default::default() };
+    let signed = pdfcraft_sign::pdf::sign(&doc, &id, &options).unwrap();
+
+    let found = crate::properties::signatures(&signed);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let one = &found[0];
+    assert_eq!(one.integrity, Integrity::Intact, "{one:?}");
+    assert_eq!(one.signer.as_deref(), Some("Pat Signer"));
+    assert_eq!(one.date.as_deref(), Some("2026-10-29"));
+    assert!(!one.identity_trusted, "no trust list: the identity is unverifiable offline");
+    assert_eq!(one.bytes_after, 0, "the signature covers the whole file");
+
+    // A byte changed inside what was signed: the page's blue becomes cyan.
+    let at = signed.windows(8).position(|w| w == b"0 0 1 rg").expect("the page's colour");
+    let mut tampered = signed.clone();
+    tampered[at + 2] = b'1';
+    assert_eq!(crate::properties::signatures(&tampered)[0].integrity, Integrity::Broken, "tampered");
+
+    // Bytes added after signing (free space, or a later save) are reported.
+    let mut padded = signed.clone();
+    padded.extend_from_slice(b"\n%% after the signature\n");
+    let after = &crate::properties::signatures(&padded)[0];
+    assert_eq!(after.bytes_after, 24, "{after:?}");
+}
+
 /// Round 19 (the corpus sweep, resetform_parent): a push button without an
 /// appearance is drawn with its caption and colours, as every form's Reset
 /// or Submit button left to the viewer; a button with its own look keeps it.

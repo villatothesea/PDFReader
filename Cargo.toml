@@ -25,6 +25,9 @@ pdfcraft-organize = { git = "https://github.com/storytold/pdfcraft", rev = "3e96
 pdfcraft-model = { git = "https://github.com/storytold/pdfcraft", rev = "3e968c8aa24adfb729c6d45a3c98abf5fed07027" }
 # Round 19 (the corpus sweep, P2): field appearances for the drawn copy.
 pdfcraft-forms = { git = "https://github.com/storytold/pdfcraft", rev = "3e968c8aa24adfb729c6d45a3c98abf5fed07027" }
+# Round 20 (#178): verifying a signature (never signing) — pdfcraft's
+# validation over the file's own bytes.
+pdfcraft-sign = { git = "https://github.com/storytold/pdfcraft", rev = "3e968c8aa24adfb729c6d45a3c98abf5fed07027" }
 
 [dev-dependencies]
 mireader-reader-host = { path = "../MimiReader/crates/reader-host" }

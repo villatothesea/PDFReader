@@ -243,6 +243,11 @@ impl Editor {
 
     /// MimiReader round 19 (O12, T1 item 6): the document as it stands now
     /// (its properties are read from it).
+    /// Round 20 (#178): the file's bytes as last read or written.
+    pub(crate) fn disk_bytes(&self) -> &[u8] {
+        &self.disk_bytes
+    }
+
     pub(crate) fn document(&self) -> &Cos {
         &self.current.doc
     }
