@@ -25,6 +25,8 @@ mod properties;
 pub mod organize;
 // Round 20 (#197): a clean, checked copy written whole.
 pub mod rewrite;
+// Round 20 (#198): passwords, redaction, hidden information.
+pub mod security;
 // MimiReader round 18: Convert to Markdown, from the retired PDFInspector.
 pub mod convert;
 // MimiReader round 19 (O12): pages as images, the text layer as plain text.
@@ -122,6 +124,9 @@ impl Reader for PdfReader {
         }
         if job.action == rewrite::ACTION {
             return rewrite::run(job);
+        }
+        if security::handles(job.action) {
+            return security::run(job);
         }
         if matches!(job.action, export::TO_TEXT | export::TO_IMAGES) {
             return export::run(job);
@@ -376,6 +381,8 @@ impl Document for PdfDocument {
                     }
                 }
                 properties.revisions = properties::revisions(editor.document(), editor.disk_bytes());
+                // Round 20 (#198): how it is encrypted.
+                properties.encryption = security::method(editor.document());
                 properties
             }
             None => mireader_reader_sdk::DocumentProperties {

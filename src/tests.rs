@@ -494,6 +494,115 @@ mod editing {
         [x0, y0, x1, y0, x0, y1, x1, y1]
     }
 
+    /// Run tool `action` on `path` with `params`; the files it wrote.
+    fn run_tool(action: &str, path: &Path, params: serde_json::Value) -> Result<(Vec<PathBuf>, Vec<String>), mireader_reader_sdk::ReaderError> {
+        let out = path.parent().unwrap().join(format!("out-{action}"));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        let mut progress = |_: mireader_reader_sdk::Progress| {};
+        let never = || false;
+        let params = params.as_object().cloned().unwrap_or_default();
+        let mut job = mireader_reader_sdk::Job::new(action, vec![path.to_path_buf()], params, Some(out), &mut progress, &never);
+        let output = crate::security::run(&mut job)?;
+        Ok((output.files.into_iter().map(PathBuf::from).collect(), output.notes))
+    }
+
+    /// Round 20 (#198): protect with both passwords and a permissions
+    /// matrix; the copy needs its open password, keeps to its matrix, and
+    /// the permissions password lifts it; Remove security needs that one.
+    #[test]
+    fn a_password_protects_and_the_right_one_removes_it() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let (files, notes) = run_tool(
+            crate::security::PROTECT,
+            &path,
+            serde_json::json!({ "open_password": "open", "permissions_password": "owner", "allow_print": true, "allow_copy": false,
+                                "allow_comments": true, "allow_forms": true, "allow_changes": false, "allow_pages": false, "encryption": "AES 256-bit" }),
+        )
+        .unwrap();
+        assert!(notes.iter().any(|n| n.contains("AES, 256")), "{notes:?}");
+        let protected = &files[0];
+        assert_eq!(PdfReader.open(protected).err().expect("needs its password").code, ErrorCode::Encrypted);
+        let mut opened = PdfReader.open_with_password(protected, Some("open")).unwrap();
+        let p = opened.properties().unwrap().permissions.expect("encrypted");
+        assert!(p.print && !p.copy && p.annotate && !p.modify && !p.assemble && !p.owner, "{p:?}");
+        let owned = PdfReader.open_with_password(protected, Some("owner")).unwrap().info().permissions.unwrap();
+        assert!(owned.owner, "the permissions password lifts it");
+        // The open password alone doesn't remove restrictions; the owner's does.
+        let refused = run_tool(crate::security::UNPROTECT, protected, serde_json::json!({ "password": "open" })).err().unwrap();
+        assert!(refused.message.contains("permissions password"), "{refused:?}");
+        let (files, _) = run_tool(crate::security::UNPROTECT, protected, serde_json::json!({ "password": "owner" })).unwrap();
+        let mut plain = open(&files[0]);
+        assert!(plain.properties().unwrap().permissions.is_none(), "no security left");
+        assert_eq!(std::fs::read(&path).unwrap(), fixtures::build_rich(), "the original untouched");
+    }
+
+    /// Round 20 (#198): words and a pattern redacted: the text is gone from
+    /// the copy (the other reader can't read it back), the rest stays, and
+    /// a file with nothing to redact says so.
+    #[test]
+    fn redaction_removes_the_words_and_patterns_for_good() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let mut before = open(&path);
+        let text = before.page_text(0).unwrap().text;
+        let word = text.split_whitespace().find(|w| w.chars().all(char::is_alphabetic) && w.len() > 4).expect("a word").to_string();
+        let keep = text.split_whitespace().find(|w| w.chars().all(char::is_alphabetic) && w.len() > 4 && **w != *word).map(str::to_string);
+        let (files, notes) = run_tool(crate::security::REDACT, &path, serde_json::json!({ "words": word.to_uppercase(), "fill": "Black" })).unwrap();
+        assert!(notes.iter().any(|n| n.contains("checked")), "{notes:?}");
+        let mut after = open(&files[0]);
+        let redacted = after.page_text(0).unwrap().text;
+        assert!(!redacted.to_lowercase().contains(&word.to_lowercase()), "{word:?} gone: {redacted:?}");
+        if let Some(keep) = keep.filter(|k| !k.to_lowercase().contains(&word.to_lowercase())) {
+            assert!(redacted.contains(&keep), "{keep:?} stays");
+        }
+        let raw = std::fs::read(&files[0]).unwrap();
+        assert_eq!(raw.windows(5).filter(|w| w == b"%%EOF").count(), 1, "written whole: no earlier revision keeps it");
+        let nothing = run_tool(crate::security::REDACT, &path, serde_json::json!({ "words": "zzqqxx-not-there" })).err().unwrap();
+        assert!(nothing.message.contains("Nothing to redact"), "{nothing:?}");
+    }
+
+    /// Round 20 (#198): text marked for redaction in the reader (saved as a
+    /// Redact mark) is what Redact… removes; the mark itself goes too, and
+    /// the encryption line stays empty for a plain file.
+    #[test]
+    fn marks_made_in_the_reader_are_applied() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let mut doc = open(&path);
+        let quad = first_line(&mut doc);
+        let first = doc.page_text(0).unwrap().text.lines().next().unwrap().trim().to_string();
+        doc.edit(EditOp::AddMarkup { page: 0, kind: MarkupKind::Redact, quads: vec![quad], color: None, contents: None }).unwrap();
+        doc.save().unwrap();
+        assert!(doc.properties().unwrap().encryption.is_none());
+        let (files, _) = run_tool(crate::security::REDACT, &path, serde_json::json!({})).unwrap();
+        let mut after = open(&files[0]);
+        let text = after.page_text(0).unwrap().text;
+        assert!(!text.contains(&first), "the marked line is gone: {first:?} in {text:?}");
+        assert!(after.annotations(0).unwrap().is_empty(), "and the mark with it");
+    }
+
+    /// Round 20 (#198): whole pages redacted leave no text on them.
+    #[test]
+    fn a_whole_page_is_redacted() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let (files, _) = run_tool(crate::security::REDACT, &path, serde_json::json!({ "pages": "1" })).unwrap();
+        let mut after = open(&files[0]);
+        assert!(after.page_text(0).unwrap().text.trim().is_empty(), "page 1 has no text left");
+    }
+
+    /// Round 20 (#198): hidden information goes, and what went is said.
+    #[test]
+    fn hidden_information_is_removed_and_listed() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let mut doc = open(&path);
+        doc.edit(EditOp::AddNote { page: 0, at: [20.0, 20.0], contents: "private remark".into(), color: None }).unwrap();
+        doc.save().unwrap();
+        let (files, notes) = run_tool(crate::security::REMOVE_HIDDEN, &path, serde_json::json!({ "comments": true, "metadata": true })).unwrap();
+        assert!(!notes.is_empty(), "what went is said");
+        assert_eq!(open(&files[0]).annotations(0).unwrap().len(), 0, "the comment is gone");
+        let none = run_tool(crate::security::REMOVE_HIDDEN, &path, serde_json::json!({})).err().unwrap();
+        assert!(none.message.contains("Choose"), "{none:?}");
+    }
+
     /// Round 20 (#197): a clean copy drops the revisions an incremental
     /// save piled up, is checked by both readers, and leaves the original.
     #[test]

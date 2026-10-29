@@ -59,6 +59,172 @@ help = "150 for reading on screen, 300 for printing"
 
 # Round 20 (#197): the whole file written anew — only what the document
 # still reaches, packed — and checked by a second reader before it is kept.
+# Round 20 (#198): security. Each writes a new file beside the original.
+[[actions]]
+id = "protect"
+title = "Protect with a password…"
+icon = "file-send"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "open_password"
+label = "Password to open it"
+kind = "password"
+help = "Leave empty to let anyone open it"
+[[actions.params]]
+id = "permissions_password"
+label = "Permissions password"
+kind = "password"
+help = "Lifts the restrictions below"
+[[actions.params]]
+id = "allow_print"
+label = "Allow printing"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "allow_copy"
+label = "Allow copying text"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "allow_comments"
+label = "Allow comments"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "allow_forms"
+label = "Allow filling forms"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "allow_changes"
+label = "Allow changes"
+kind = "bool"
+default = false
+[[actions.params]]
+id = "allow_pages"
+label = "Allow taking pages apart or rearranging them"
+kind = "bool"
+default = false
+[[actions.params]]
+id = "encryption"
+label = "Encryption"
+kind = "choice"
+choices = ["AES 256-bit", "AES 128-bit", "RC4 128-bit"]
+default = "AES 256-bit"
+[[actions.params]]
+id = "leave_metadata"
+label = "Leave the title and author readable"
+kind = "bool"
+default = false
+
+[[actions]]
+id = "remove-security"
+title = "Remove security…"
+icon = "file-send"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "password"
+label = "Permissions password"
+kind = "password"
+help = "Or the password that opens it, when it has no restrictions"
+
+[[actions]]
+id = "redact"
+title = "Redact…"
+icon = "file-send"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "words"
+label = "Words and phrases"
+kind = "text"
+help = "Separated by commas. Redaction marks already in the file are applied too."
+[[actions.params]]
+id = "emails"
+label = "Email addresses"
+kind = "bool"
+[[actions.params]]
+id = "phones"
+label = "Phone numbers"
+kind = "bool"
+[[actions.params]]
+id = "cards"
+label = "Card numbers"
+kind = "bool"
+[[actions.params]]
+id = "ssns"
+label = "US Social Security numbers"
+kind = "bool"
+[[actions.params]]
+id = "dates"
+label = "Dates"
+kind = "bool"
+[[actions.params]]
+id = "pages"
+label = "Whole pages"
+kind = "pages"
+help = "For example 3, 7-9"
+[[actions.params]]
+id = "fill"
+label = "Box colour"
+kind = "choice"
+choices = ["Black", "White"]
+default = "Black"
+
+[[actions]]
+id = "remove-hidden"
+title = "Remove hidden information…"
+icon = "file-send"
+extensions = ["pdf"]
+files = "pdf"
+[[actions.params]]
+id = "metadata"
+label = "Metadata (title, author, dates, XMP)"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "attachments"
+label = "Attached files"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "comments"
+label = "Comments"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "fields"
+label = "Form fields (their look stays on the page)"
+kind = "bool"
+default = false
+[[actions.params]]
+id = "hidden_text"
+label = "Invisible text"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "hidden_layers"
+label = "Hidden layers"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "bookmarks"
+label = "Bookmarks"
+kind = "bool"
+default = false
+[[actions.params]]
+id = "links"
+label = "Links, actions and scripts"
+kind = "bool"
+default = true
+[[actions.params]]
+id = "private"
+label = "Other programs' private data"
+kind = "bool"
+default = true
+
 [[actions]]
 id = "rewrite-clean"
 title = "Save a clean copy"

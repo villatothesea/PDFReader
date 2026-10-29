@@ -75,7 +75,7 @@ fn failed(error: impl std::fmt::Display) -> ReaderError {
 }
 
 /// `[x, y]` in the text layer's space → the page's user space.
-fn to_user(doc: &Cos, page: &Page, x: f32, y: f32) -> [f64; 2] {
+pub(crate) fn to_user(doc: &Cos, page: &Page, x: f32, y: f32) -> [f64; 2] {
     let (_, h) = page.display_size(doc);
     let m = page.view_matrix(doc);
     let (dx, dy) = (x as f64, h - y as f64);
@@ -515,12 +515,13 @@ impl Editor {
                 if quads.is_empty() {
                     return Err(ReaderError::bad_request("a markup needs some text to cover"));
                 }
-                let kind = match kind {
-                    MarkupKind::Highlight => Markup::Highlight,
-                    MarkupKind::Underline => Markup::Underline,
-                    MarkupKind::StrikeOut => Markup::StrikeOut,
+                let shape = match kind {
+                    MarkupKind::Highlight => Shape::TextMarkup { kind: Markup::Highlight, quads },
+                    MarkupKind::Underline => Shape::TextMarkup { kind: Markup::Underline, quads },
+                    MarkupKind::StrikeOut => Shape::TextMarkup { kind: Markup::StrikeOut, quads },
+                    // Round 20 (#198): a redaction mark, applied by the Redact tool.
+                    MarkupKind::Redact => Shape::Redact { quads, overlay: String::new(), look: pdfcraft_annot::OverlayLook::default() },
                 };
-                let shape = Shape::TextMarkup { kind, quads };
                 let mut style = Style::default_for(&shape);
                 if let Some(c) = color {
                     style.color = [c[0] as f64, c[1] as f64, c[2] as f64];
