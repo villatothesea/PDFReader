@@ -580,6 +580,44 @@ mod editing {
         assert!(after.annotations(0).unwrap().is_empty(), "and the mark with it");
     }
 
+    /// #214: an area marked for redaction (a box dragged on the page, one
+    /// quad that isn't a text line's) removes what lies inside it.
+    #[test]
+    fn an_area_mark_removes_what_is_inside_it() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let mut doc = open(&path);
+        let line = first_line(&mut doc);
+        let first = doc.page_text(0).unwrap().text.lines().next().unwrap().trim().to_string();
+        // A box around the line, with room to spare on every side.
+        let (x0, y0) = (line[0].min(line[4]) - 6.0, line[1].min(line[3]) - 6.0);
+        let (x1, y1) = (line[2].max(line[6]) + 6.0, line[5].max(line[7]) + 6.0);
+        let area = [x0, y0, x1, y0, x0, y1, x1, y1];
+        doc.edit(EditOp::AddMarkup { page: 0, kind: MarkupKind::Redact, quads: vec![area], color: None, contents: None }).unwrap();
+        doc.save().unwrap();
+        let (files, _) = run_tool(crate::security::REDACT, &path, serde_json::json!({})).unwrap();
+        let mut after = open(&files[0]);
+        let text = after.page_text(0).unwrap().text;
+        assert!(!text.contains(&first), "what the box held is gone: {first:?} in {text:?}");
+    }
+
+    /// #217: a redaction mark made in the reader can be taken back: it's
+    /// listed as the reader's own, and deleting it leaves nothing to apply.
+    #[test]
+    fn a_redaction_mark_can_be_removed() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let mut doc = open(&path);
+        let quad = first_line(&mut doc);
+        doc.edit(EditOp::AddMarkup { page: 0, kind: MarkupKind::Redact, quads: vec![quad], color: None, contents: None }).unwrap();
+        let marks = doc.annotations(0).unwrap();
+        let mark = marks.iter().find(|a| matches!(&a.kind, AnnotationKind::Other(name) if name == "Redact")).expect("the mark is listed");
+        assert!(mark.editable, "the reader's own pending mark: {mark:?}");
+        doc.edit(EditOp::Delete { id: mark.id.clone() }).unwrap();
+        assert!(doc.annotations(0).unwrap().is_empty(), "taken back");
+        doc.save().unwrap();
+        let nothing = run_tool(crate::security::REDACT, &path, serde_json::json!({})).err().unwrap();
+        assert!(nothing.message.contains("Nothing to redact"), "{nothing:?}");
+    }
+
     /// Round 20 (#198): whole pages redacted leave no text on them.
     #[test]
     fn a_whole_page_is_redacted() {

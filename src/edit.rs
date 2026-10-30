@@ -348,12 +348,15 @@ impl Editor {
             // Round 20 (#173): the comment this one replies to.
             let in_reply_to = dict.get(b"IRT").and_then(|irt| doc.dict(irt).map(|parent| id_of(doc, irt, &parent, page_ix as usize, index)));
             let locked = dict.int(b"F").is_some_and(|flags| flags & LOCKED != 0);
+            // #217: a pending redaction mark is the reader's to remove too
+            // (mark, then apply: a mark that can't be taken back made Ctrl+Z
+            // the only way out).
             let editable = !locked
                 && !self.kinds.is_empty()
-                && matches!(
+                && (matches!(
                     kind,
                     AnnotationKind::Highlight | AnnotationKind::Underline | AnnotationKind::StrikeOut | AnnotationKind::Note
-                );
+                ) || matches!(&kind, AnnotationKind::Other(name) if name == "Redact"));
             out.push(Annotation {
                 id: id_of(doc, entry, &dict, page_ix as usize, index),
                 page: page_ix,
