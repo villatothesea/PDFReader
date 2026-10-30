@@ -15,6 +15,7 @@ license = "MIT (MiReader); hayro: MIT/Apache-2.0; pdfcraft: MIT/Apache-2.0"
 id = "pdf-to-markdown"
 title = "Convert to Markdown"
 icon = "markdown"
+group = "convert"
 extensions = ["pdf"]
 output = "md"
 
@@ -26,6 +27,7 @@ output = "md"
 id = "pdf-to-text"
 title = "Convert to plain text…"
 icon = "paragraph"
+group = "convert"
 extensions = ["pdf"]
 output = "txt"
 [[actions.params]]
@@ -38,6 +40,7 @@ help = "Empty for every page, or for example 1-3, 7, 10-"
 id = "pdf-to-images"
 title = "Save pages as images…"
 icon = "gallery"
+group = "convert"
 extensions = ["pdf"]
 files = "png"
 [[actions.params]]
@@ -65,6 +68,7 @@ help = "150 for reading on screen, 300 for printing"
 id = "print-layout"
 title = "Print layout…"
 icon = "file-send"
+group = "print"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -145,6 +149,7 @@ max = 600
 id = "protect"
 title = "Protect with a password…"
 icon = "file-send"
+group = "security"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -203,6 +208,7 @@ default = false
 id = "remove-security"
 title = "Remove security…"
 icon = "file-send"
+group = "security"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -215,6 +221,7 @@ help = "Or the password that opens it, when it has no restrictions"
 id = "redact"
 title = "Redact…"
 icon = "file-send"
+group = "security"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -257,7 +264,8 @@ default = "Black"
 [[actions]]
 id = "remove-hidden"
 title = "Remove hidden information…"
-icon = "file-send"
+icon = "eye-closed"
+group = "security"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -309,7 +317,8 @@ default = true
 [[actions]]
 id = "rewrite-clean"
 title = "Save a clean copy"
-icon = "file-send"
+icon = "diskette-pen"
+group = "security"
 extensions = ["pdf"]
 files = "pdf"
 
@@ -317,6 +326,7 @@ files = "pdf"
 id = "extract-pages"
 title = "Extract pages…"
 icon = "file-send"
+group = "organize"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -330,6 +340,7 @@ help = "For example 1-3, 7, 10-"
 id = "reorder-pages"
 title = "Reorder pages…"
 icon = "sort-vertical"
+group = "organize"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -343,6 +354,7 @@ help = "For example 3, 1-2, 5 — pages left out follow in their order"
 id = "split-every"
 title = "Split every N pages…"
 icon = "scissors"
+group = "organize"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -356,6 +368,7 @@ min = 1
 id = "split-at"
 title = "Split before pages…"
 icon = "page-split-before"
+group = "organize"
 extensions = ["pdf"]
 files = "pdf"
 [[actions.params]]
@@ -369,6 +382,7 @@ help = "For example 5, 12"
 id = "merge"
 title = "Merge with other PDFs…"
 icon = "documents"
+group = "organize"
 extensions = ["pdf"]
 inputs = "many"
 files = "pdf"
