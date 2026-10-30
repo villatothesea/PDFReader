@@ -67,7 +67,7 @@ help = "150 for reading on screen, 300 for printing"
 [[actions]]
 id = "print-layout"
 title = "Print layout…"
-icon = "file-send"
+icon = "printer"
 group = "print"
 extensions = ["pdf"]
 files = "pdf"
@@ -148,7 +148,7 @@ max = 600
 [[actions]]
 id = "protect"
 title = "Protect with a password…"
-icon = "file-send"
+icon = "lock"
 group = "security"
 extensions = ["pdf"]
 files = "pdf"
@@ -207,7 +207,7 @@ default = false
 [[actions]]
 id = "remove-security"
 title = "Remove security…"
-icon = "file-send"
+icon = "lock-open"
 group = "security"
 extensions = ["pdf"]
 files = "pdf"
@@ -220,7 +220,7 @@ help = "Or the password that opens it, when it has no restrictions"
 [[actions]]
 id = "redact"
 title = "Redact…"
-icon = "file-send"
+icon = "redaction"
 group = "security"
 extensions = ["pdf"]
 files = "pdf"
