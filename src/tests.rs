@@ -792,10 +792,51 @@ mod editing {
         let kinds = doc.info().edit.expect("comments allowed").kinds;
         assert!(kinds.contains(&EditKind::Markup) && kinds.contains(&EditKind::Note), "comments: {kinds:?}");
         assert!(!kinds.contains(&EditKind::Info) && !kinds.contains(&EditKind::Bookmark), "no changes, no bookmarks: {kinds:?}");
+        assert!(!kinds.contains(&EditKind::Rotate), "no turning the pages: {kinds:?}");
         let permissions = doc.properties().unwrap().permissions.expect("encrypted");
         assert!(permissions.annotate && permissions.print && !permissions.modify && !permissions.assemble && !permissions.owner);
         let refused = crate::organize::open(&path).err().expect("the page tools refuse");
         assert!(refused.message.contains("security settings"), "{refused:?}");
+    }
+
+    /// #213: a turn is an edit: the pages and a comment on them turn, Undo
+    /// and Redo move it, and Save writes it to the file.
+    #[test]
+    fn a_turn_is_saved_to_the_file_and_undoes() {
+        let (_dir, path) = file(&fixtures::build_rich());
+        let mut doc = open(&path);
+        let upright = doc.info().pages[0];
+        assert!(doc.info().edit.expect("editable").kinds.contains(&EditKind::Rotate));
+        doc.edit(EditOp::AddNote { page: 0, at: [50.0, 60.0], contents: "here".into(), color: None }).unwrap();
+        let note = |doc: &mut Box<dyn Document>| doc.annotations(0).unwrap()[0].rect;
+        let flat = note(&mut doc);
+
+        let state = doc.edit(EditOp::RotatePages { quarters: 1 }).unwrap().0;
+        assert!(state.dirty && state.can_undo);
+        let turned = doc.info().pages[0];
+        assert_eq!((turned.width, turned.height), (upright.height, upright.width));
+        // Display point (x, y), turned clockwise: (height - y, x).
+        let on_side = note(&mut doc);
+        assert!((on_side[0] - (upright.height - flat[3])).abs() < 0.5 && (on_side[1] - flat[0]).abs() < 0.5, "{flat:?} -> {on_side:?}");
+
+        doc.undo().unwrap();
+        assert_eq!(doc.info().pages[0], upright);
+        assert_eq!(note(&mut doc), flat);
+        doc.redo().unwrap();
+        assert_eq!(doc.info().pages[0], turned);
+
+        // Three quarters more comes back round to the file's own turn.
+        doc.edit(EditOp::RotatePages { quarters: 3 }).unwrap();
+        assert_eq!(doc.info().pages[0], upright);
+        doc.edit(EditOp::RotatePages { quarters: 1 }).unwrap();
+
+        assert!(!doc.save().unwrap().dirty);
+        drop(doc);
+        let doc = open(&path);
+        assert_eq!(doc.info().pages[0], turned, "in the file");
+        let cos = pdfcraft_cos::Document::open(std::sync::Arc::new(std::fs::read(&path).unwrap())).unwrap();
+        let page = pdfcraft_model::pages(&cos)[0].clone();
+        assert_eq!(page.dict.get(b"Rotate").and_then(|value| cos.resolve(value).as_int()), Some(90));
     }
 
     /// Round 19 (the corpus sweep): a file whose structure had to be rebuilt
@@ -1010,7 +1051,7 @@ mod editing {
         let (_dir, path) = file(&original);
         let mut doc = open(&path);
         let edit = doc.info().edit.expect("editable");
-        assert_eq!(edit.kinds, vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark, EditKind::Info]);
+        assert_eq!(edit.kinds, vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark, EditKind::Info, EditKind::Rotate]);
         assert!(edit.guard.is_none());
 
         let quad = first_line(&mut doc);
@@ -1147,6 +1188,7 @@ mod editing {
         let doc = open(&path);
         let edit = doc.info().edit.unwrap();
         assert_eq!(edit.guard.as_ref().map(|g| g.kind), Some(GuardKind::Signed));
+        assert!(!edit.kinds.contains(&EditKind::Rotate), "only the view turns: {:?}", edit.kinds);
         assert!(!edit.kinds.is_empty(), "comments are allowed");
 
         let certified = with_signature(Some(1));

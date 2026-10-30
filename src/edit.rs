@@ -189,7 +189,7 @@ impl Editor {
     pub(crate) fn open(path: &Path, bytes: Arc<Vec<u8>>, password: Option<&str>) -> Option<Editor> {
         let doc = Cos::open_with_password(bytes.clone(), password).ok()?;
         // Round 19 (T1 item 6): and the Info dictionary's four fields.
-        let mut kinds = vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark, EditKind::Info];
+        let mut kinds = vec![EditKind::Markup, EditKind::Note, EditKind::Bookmark, EditKind::Info, EditKind::Rotate];
         // Round 20 (#177): filling its form, when it has one — never an
         // encrypted one (it would be half-written; #180 catalogues that).
         if doc.permissions().is_none() && !pdfcraft_forms::fields(&doc).is_empty() {
@@ -203,7 +203,8 @@ impl Editor {
             kinds.retain(|kind| match kind {
                 EditKind::Markup | EditKind::Note => permissions.annotate(),
                 EditKind::Info => permissions.modify(),
-                EditKind::Bookmark => permissions.assemble(),
+                // #213: rotating is assembling (Table 22).
+                EditKind::Bookmark | EditKind::Rotate => permissions.assemble(),
                 EditKind::Form => permissions.fill_forms(),
             });
             if kinds.is_empty() {
@@ -213,7 +214,12 @@ impl Editor {
                 });
             }
         }
-        match signature(&doc) {
+        let signed = signature(&doc);
+        // #213: a turn changes what was signed: only the view turns.
+        if signed.is_some() {
+            kinds.retain(|kind| *kind != EditKind::Rotate);
+        }
+        match signed {
             Some(true) if guard.is_none() => {
                 kinds.clear();
                 guard = Some(EditGuard {
@@ -675,6 +681,12 @@ impl Editor {
             }
             EditOp::SetInfo { title, author, subject, keywords } => {
                 set_info(doc, [("Title", title), ("Author", author), ("Subject", subject), ("Keywords", keywords)])?;
+                Ok(None)
+            }
+            // #213: comments are in user space, and turn with their page.
+            EditOp::RotatePages { quarters } => {
+                let all: Vec<usize> = (0..pages.len()).collect();
+                pdfcraft_organize::rotate_pages(doc, &all, i64::from(quarters) * 90).map_err(failed)?;
                 Ok(None)
             }
         }
